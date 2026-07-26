@@ -1,6 +1,6 @@
 {
   "name": "divex-visualizer",
-  "version": "0.1.2",
+  "version": "0.2.3",
   "private": true,
   "description": "A beginner-friendly 3D code visualizer for understanding projects, dependencies, and execution structure.",
   "main": "electron/main.cjs",

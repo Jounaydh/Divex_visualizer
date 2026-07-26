@@ -1,5 +1,11 @@
 export type ExperienceMode = "beginner" | "advanced";
 export type ViewMode = "3d" | "2d";
+export type WorkflowDirection = "top-down" | "bottom-up" | "left-right" | "right-left";
+
+export interface WorkflowPosition {
+  x: number;
+  y: number;
+}
 
 export type FileKind =
   | "dart"

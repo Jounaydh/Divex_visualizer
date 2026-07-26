@@ -1,23 +1,14 @@
-import {
-  Box,
-  BrainCircuit,
-  ChevronDown,
-  FolderOpen,
-  Move3d,
-  Power,
-  RotateCcw,
-  ScanSearch,
-  Sparkles,
-  Workflow,
-} from "lucide-react";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useRef, useState } from "react";
 import { analyzeProject } from "./analysis/analyzeProject";
-import { BrandMark } from "./components/BrandMark";
 import { CodeEditor } from "./components/CodeEditor";
-import { FileExplorer } from "./components/FileExplorer";
 import { InspectorPanel } from "./components/InspectorPanel";
-import { TwoDVisualizer } from "./components/TwoDVisualizer";
+import { AppHeader } from "./components/shell/AppHeader";
+import { ProjectSidebar } from "./components/shell/ProjectSidebar";
+import { VisualizerToolbar } from "./components/visualizer/VisualizerToolbar";
+import { TwoDVisualizer } from "./components/visualizer/two-d/TwoDVisualizer";
 import { sampleProject } from "./data/sampleProject";
+import { useElementFullscreen } from "./hooks/useElementFullscreen";
+import { useGraphExpansion } from "./hooks/useGraphExpansion";
 import type {
   AnalyzedFile,
   ExperienceMode,
@@ -25,33 +16,17 @@ import type {
   ProjectPayload,
   ViewMode,
   VisualNode,
+  WorkflowDirection,
+  WorkflowPosition,
 } from "./types";
 
 const ThreeVisualizer = lazy(() =>
-  import("./components/ThreeVisualizer").then((module) => ({
-    default: module.ThreeVisualizer,
-  })),
+  import("./components/visualizer/three-d/ThreeVisualizer").then(
+    (module) => ({
+      default: module.ThreeVisualizer,
+    }),
+  ),
 );
-
-const folderIdsForPath = (path: string) => {
-  const parts = path.split("/");
-  parts.pop();
-  return parts.map(
-    (_, index) => `folder:${parts.slice(0, index + 1).join("/")}`,
-  );
-};
-
-const folderLayer = (id: string) =>
-  id
-    .slice("folder:".length)
-    .split("/")
-    .filter(Boolean).length;
-
-const fileLayer = (id: string) =>
-  id
-    .slice("file:".length)
-    .split("/")
-    .filter(Boolean).length;
 
 export default function App() {
   const [payload, setPayload] = useState<ProjectPayload>(sampleProject);
@@ -59,20 +34,32 @@ export default function App() {
   const [experienceMode, setExperienceMode] =
     useState<ExperienceMode>("beginner");
   const [viewMode, setViewMode] = useState<ViewMode>("2d");
+  const [workflowDirection, setWorkflowDirection] =
+    useState<WorkflowDirection>("top-down");
+  const [freePositioning, setFreePositioning] = useState(false);
   const [twoDZoom, setTwoDZoom] = useState(1.4);
-  const [expandedFolders, setExpandedFolders] = useState(
-    () => new Set(["folder:lib"]),
-  );
-  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [twoDPositions, setTwoDPositions] = useState<
+    Record<string, WorkflowPosition>
+  >({});
   const [selectedNode, setSelectedNode] = useState<VisualNode | null>(null);
   const [showCode, setShowCode] = useState(false);
   const [cameraResetKey, setCameraResetKey] = useState(0);
-  const [fileMenuOpen, setFileMenuOpen] = useState(false);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [openingProject, setOpeningProject] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const visualizerRef = useRef<HTMLElement>(null);
+  const { isFullscreen, toggleFullscreen } =
+    useElementFullscreen(visualizerRef);
+  const {
+    expandedFolders,
+    expandedFiles,
+    threeDExpansion,
+    resetExpansion,
+    revealFilePath,
+    toggleFolderAtLayer,
+    toggleFileAtLayer,
+    toggleFolderFreely,
+    toggleFileFreely,
+  } = useGraphExpansion(selectedNode, viewMode);
 
   const selectedFile = useMemo(() => {
     if (!selectedNode?.path) return null;
@@ -81,142 +68,50 @@ export default function App() {
     );
   }, [project.files, selectedNode]);
 
-  const threeDExpansion = useMemo(() => {
-    const choices = new Map<
-      number,
-      { id: string; kind: "folder" | "file" }
-    >();
-    expandedFolders.forEach((id) =>
-      choices.set(folderLayer(id), { id, kind: "folder" }),
-    );
-    expandedFiles.forEach((id) =>
-      choices.set(fileLayer(id), { id, kind: "file" }),
-    );
-
-    if (
-      selectedNode?.kind === "folder" &&
-      expandedFolders.has(selectedNode.id)
-    ) {
-      choices.set(folderLayer(selectedNode.id), {
-        id: selectedNode.id,
-        kind: "folder",
-      });
-    } else if (
-      selectedNode?.kind === "file" &&
-      expandedFiles.has(selectedNode.id)
-    ) {
-      choices.set(fileLayer(selectedNode.id), {
-        id: selectedNode.id,
-        kind: "file",
-      });
-    }
-
-    const folders = new Set<string>();
-    const files = new Set<string>();
-    choices.forEach((choice) => {
-      if (choice.kind === "folder") folders.add(choice.id);
-      else files.add(choice.id);
-    });
-    return { folders, files };
-  }, [expandedFiles, expandedFolders, selectedNode]);
-
-  const toggleFolderAtLayer = (id: string) => {
-    const isOpen = threeDExpansion.folders.has(id);
-    const layer = folderLayer(id);
-    setExpandedFolders((current) => {
-      const next = new Set(current);
-      if (isOpen) {
-        next.delete(id);
-        return next;
-      }
-      [...next].forEach((openId) => {
-        if (folderLayer(openId) === layer) next.delete(openId);
-      });
-      next.add(id);
-      return next;
-    });
-    if (!isOpen) {
-      setExpandedFiles((current) => {
-        const next = new Set(current);
-        [...next].forEach((openId) => {
-          if (fileLayer(openId) === layer) next.delete(openId);
-        });
-        return next;
-      });
-    }
+  const showTransientNotice = (message: string, duration = 3500) => {
+    setNotice(message);
+    window.setTimeout(() => setNotice(null), duration);
   };
 
-  const toggleFileAtLayer = (id: string) => {
-    const isOpen = threeDExpansion.files.has(id);
-    const layer = fileLayer(id);
-    setExpandedFiles((current) => {
-      const next = new Set(current);
-      if (isOpen) {
-        next.delete(id);
-        return next;
-      }
-      [...next].forEach((openId) => {
-        if (fileLayer(openId) === layer) next.delete(openId);
-      });
-      next.add(id);
-      return next;
-    });
-    if (!isOpen) {
-      setExpandedFolders((current) => {
-        const next = new Set(current);
-        [...next].forEach((openId) => {
-          if (folderLayer(openId) === layer) next.delete(openId);
-        });
-        return next;
-      });
+  const resetProjectView = (firstFolder?: string) => {
+    resetExpansion(firstFolder);
+    setTwoDZoom(1.4);
+    setTwoDPositions({});
+    setSelectedNode(null);
+    setShowCode(false);
+    setCameraResetKey((value) => value + 1);
+  };
+
+  const changeViewMode = (nextViewMode: ViewMode) => {
+    setViewMode(nextViewMode);
+    setShowCode(false);
+  };
+
+  const selectWorkflowDirection = (direction: WorkflowDirection) => {
+    setWorkflowDirection(direction);
+    setTwoDPositions({});
+    changeViewMode("2d");
+  };
+
+  const toggleFreePositioning = () => {
+    setFreePositioning((value) => !value);
+    changeViewMode("2d");
+  };
+
+  const handleToggleFullscreen = async () => {
+    try {
+      await toggleFullscreen();
+    } catch (error) {
+      showTransientNotice(
+        error instanceof Error
+          ? error.message
+          : "Fullscreen mode is not available.",
+      );
     }
-  };
-
-  const toggleFolderFreely = (id: string) => {
-    setExpandedFolders((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleFileFreely = (id: string) => {
-    setExpandedFiles((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   };
 
   const selectFile = (file: AnalyzedFile) => {
-    const ancestorIds = folderIdsForPath(file.path);
-    const ancestorLayers = new Set(ancestorIds.map(folderLayer));
-    setExpandedFolders((current) => {
-      const next = new Set(current);
-      ancestorIds.forEach((id) => {
-        if (viewMode === "2d") {
-          next.add(id);
-          return;
-        }
-        const layer = folderLayer(id);
-        [...next].forEach((openId) => {
-          if (folderLayer(openId) === layer) next.delete(openId);
-        });
-        next.add(id);
-      });
-      return next;
-    });
-    if (viewMode === "3d") {
-      setExpandedFiles((current) => {
-        const next = new Set(current);
-        [...next].forEach((openId) => {
-          if (ancestorLayers.has(fileLayer(openId))) next.delete(openId);
-        });
-        return next;
-      });
-    }
+    revealFilePath(file.path);
     setSelectedNode({
       id: file.id,
       label: file.name,
@@ -254,12 +149,16 @@ export default function App() {
     }));
   };
 
+  const loadDemoProject = () => {
+    setPayload(sampleProject);
+    resetProjectView("lib");
+  };
+
   const openProject = async () => {
-    setFileMenuOpen(false);
-    setProjectMenuOpen(false);
     if (!window.divex) {
-      setNotice("Folder selection is available in the Divex desktop window.");
-      window.setTimeout(() => setNotice(null), 3500);
+      showTransientNotice(
+        "Folder selection is available in the Divex desktop window.",
+      );
       return;
     }
 
@@ -271,19 +170,14 @@ export default function App() {
       const firstTopLevelFolder = nextProject.files
         .map((file) => file.path.split("/"))
         .find((parts) => parts.length > 1)?.[0];
-      setExpandedFolders(
-        new Set(firstTopLevelFolder ? [`folder:${firstTopLevelFolder}`] : []),
-      );
-      setExpandedFiles(new Set());
-      setTwoDZoom(1.4);
-      setSelectedNode(null);
-      setShowCode(false);
-      setCameraResetKey((value) => value + 1);
+      resetProjectView(firstTopLevelFolder);
     } catch (error) {
-      setNotice(
-        error instanceof Error ? error.message : "The project could not be opened.",
+      showTransientNotice(
+        error instanceof Error
+          ? error.message
+          : "The project could not be opened.",
+        4500,
       );
-      window.setTimeout(() => setNotice(null), 4500);
     } finally {
       setOpeningProject(false);
     }
@@ -291,202 +185,39 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="titlebar">
-        <div className="window-drag-region" />
-        <div className="titlebar-brand">
-          <BrandMark />
-          <strong>Divex</strong>
-          <span>Visualizer</span>
-          <small>EARLY ACCESS</small>
-          <div className="header-file-menu">
-            <button
-              type="button"
-              onClick={() => setFileMenuOpen((value) => !value)}
-            >
-              File
-            </button>
-            {fileMenuOpen && (
-              <div className="header-file-popover">
-                <button type="button" onClick={openProject}>
-                  <FolderOpen size={14} />
-                  Open Folder…
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="titlebar-center">
-          <span className="status-dot" />
-          Flutter analyzer
-        </div>
-        <button type="button" className="ai-button" disabled>
-          <Sparkles size={14} />
-          Ask Divex
-          <span>Later</span>
-        </button>
-      </header>
+      <AppHeader onOpenProject={openProject} />
 
       <div className="workspace">
-        <aside className="sidebar">
-          <div className="project-switcher">
-            <button
-              type="button"
-              className="project-button"
-              onClick={() => setProjectMenuOpen((value) => !value)}
-            >
-              <span className="project-icon">
-                <Box size={15} />
-              </span>
-              <span>
-                <strong>{project.name}</strong>
-                <small>Flutter project</small>
-              </span>
-              <ChevronDown size={14} />
-            </button>
-            {projectMenuOpen && (
-              <div className="project-menu">
-                <button type="button" onClick={openProject}>
-                  <FolderOpen size={15} />
-                  Open project folder…
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPayload(sampleProject);
-                    setTwoDZoom(1.4);
-                    setProjectMenuOpen(false);
-                  }}
-                >
-                  <ScanSearch size={15} />
-                  Load demo project
-                </button>
-              </div>
-            )}
-            <button
-              type="button"
-              className="open-folder-button"
-              onClick={openProject}
-            >
-              <FolderOpen size={14} />
-              Open folder
-            </button>
-          </div>
+        <ProjectSidebar
+          project={project}
+          selectedId={selectedNode?.id ?? null}
+          onOpenProject={openProject}
+          onLoadDemo={loadDemoProject}
+          onSelectFile={selectFile}
+          onSelectFolder={selectFolder}
+        />
 
-          <div className="sidebar-label">
-            <span>PROJECT FILES</span>
-            <small>{project.files.length}</small>
-          </div>
-          <FileExplorer
-            root={project.root}
-            selectedId={selectedNode?.id ?? null}
-            onSelectFile={selectFile}
-            onSelectFolder={selectFolder}
+        <section
+          ref={visualizerRef}
+          className={`visualizer-area ${isFullscreen ? "is-fullscreen" : ""}`}
+        >
+          <VisualizerToolbar
+            viewMode={viewMode}
+            showCode={showCode}
+            relationshipCount={project.relationshipCount}
+            experienceMode={experienceMode}
+            workflowDirection={workflowDirection}
+            freePositioning={freePositioning}
+            hasCustomPositions={Object.keys(twoDPositions).length > 0}
+            isFullscreen={isFullscreen}
+            onViewModeChange={changeViewMode}
+            onExperienceModeChange={setExperienceMode}
+            onWorkflowDirectionChange={selectWorkflowDirection}
+            onToggleFreePositioning={toggleFreePositioning}
+            onResetCustomPositions={() => setTwoDPositions({})}
+            onResetCamera={() => setCameraResetKey((value) => value + 1)}
+            onToggleFullscreen={handleToggleFullscreen}
           />
-
-          <div className="sidebar-summary">
-            <div>
-              <span>{project.files.length}</span>
-              <small>files</small>
-            </div>
-            <div>
-              <span>{project.relationshipCount}</span>
-              <small>links</small>
-            </div>
-            <div>
-              <span>
-                {project.files.reduce(
-                  (total, file) => total + file.symbols.length,
-                  0,
-                )}
-              </span>
-              <small>symbols</small>
-            </div>
-          </div>
-        </aside>
-
-        <section className="visualizer-area">
-          <div className="canvas-toolbar">
-            <div className="segmented-control">
-              <button
-                type="button"
-                className={viewMode === "2d" ? "active" : ""}
-                onClick={() => {
-                  setViewMode("2d");
-                  setShowCode(false);
-                }}
-              >
-                <Workflow size={14} />
-                2D flow
-              </button>
-              <button
-                type="button"
-                className={viewMode === "3d" ? "active" : ""}
-                onClick={() => {
-                  setViewMode("3d");
-                  setShowCode(false);
-                }}
-              >
-                <Move3d size={14} />
-                3D map
-              </button>
-            </div>
-
-            <div className="canvas-context">
-              <span>
-                {showCode
-                  ? "Flutter code editor"
-                  : viewMode === "3d"
-                    ? "Interactive space"
-                    : "Workflow map"}
-              </span>
-              <i />
-              <strong>{project.relationshipCount} relationships</strong>
-            </div>
-
-            <div className="toolbar-actions">
-              <div className="mode-switch">
-                <button
-                  type="button"
-                  className={experienceMode === "beginner" ? "active" : ""}
-                  onClick={() => setExperienceMode("beginner")}
-                >
-                  Guided
-                </button>
-                <button
-                  type="button"
-                  className={experienceMode === "advanced" ? "active" : ""}
-                  onClick={() => setExperienceMode("advanced")}
-                >
-                  <BrainCircuit size={13} />
-                  Advanced
-                </button>
-              </div>
-              {viewMode === "3d" && (
-                <>
-                  <button
-                    type="button"
-                    className="reset-button"
-                    onClick={() => setCameraResetKey((value) => value + 1)}
-                    title="Reset camera"
-                  >
-                    <RotateCcw size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    className="reset-button unload-three-button"
-                    aria-label="Unload 3D and return to 2D"
-                    onClick={() => {
-                      setViewMode("2d");
-                      setShowCode(false);
-                    }}
-                    title="Unload 3D for better performance"
-                  >
-                    <Power size={15} />
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
 
           <div className="visualizer-canvas">
             {showCode && selectedFile ? (
@@ -529,7 +260,11 @@ export default function App() {
                 expandedFiles={expandedFiles}
                 selectedId={selectedNode?.id ?? null}
                 zoom={twoDZoom}
+                direction={workflowDirection}
+                freePositioning={freePositioning}
+                customPositions={twoDPositions}
                 onZoomChange={setTwoDZoom}
+                onCustomPositionsChange={setTwoDPositions}
                 onSelectNode={(node) => {
                   setSelectedNode(node);
                   setShowCode(false);
@@ -540,16 +275,24 @@ export default function App() {
             )}
             {!showCode && viewMode === "3d" && (
               <div className="canvas-help">
-                <span><i className="mouse-icon" /> Mouse drag: rotate</span>
-                <span><i className="mouse-icon" /> 2-finger sideways: rotate</span>
+                <span>
+                  <i className="mouse-icon" /> Mouse drag: rotate
+                </span>
+                <span>
+                  <i className="mouse-icon" /> 2-finger sideways: rotate
+                </span>
                 <span>2-finger vertical: move</span>
                 <span>Pinch: zoom</span>
               </div>
             )}
             {!showCode && (
               <div className="graph-legend">
-                <span><i className="line-solid" /> Contains</span>
-                <span><i className="line-dashed" /> Imports</span>
+                <span>
+                  <i className="line-solid" /> Contains
+                </span>
+                <span>
+                  <i className="line-dashed" /> Imports
+                </span>
               </div>
             )}
           </div>

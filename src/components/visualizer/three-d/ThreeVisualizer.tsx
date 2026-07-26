@@ -1,4 +1,4 @@
-import { CubicBezierLine, Html, OrbitControls } from "@react-three/drei";
+import { CubicBezierLine, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -6,8 +6,23 @@ import type {
   AnalyzedProject,
   ExperienceMode,
   VisualNode,
-} from "../types";
-import { buildVisualGraph } from "../visualization/buildVisualGraph";
+} from "../../../types";
+import { buildVisualGraph } from "../../../visualization/buildVisualGraph";
+import { ThreeDNode } from "./ThreeDNode";
+import {
+  AUTOLOCK_EASING,
+  CAMERA_POLAR_ANGLE,
+  CAMERA_POSITION,
+  CAMERA_TARGET,
+  MAX_CAMERA_DISTANCE,
+  MIN_CAMERA_DISTANCE,
+  routedEdgePoints,
+  shortestAngleDifference,
+  VERTICAL_CENTER_MARGIN,
+  type AutolockAnimation,
+  type RingRotations,
+} from "./threeDGeometry";
+import { useThreeDGestures } from "./useThreeDGestures";
 
 interface ThreeVisualizerProps {
   project: AnalyzedProject;
@@ -19,122 +34,6 @@ interface ThreeVisualizerProps {
   onSelectNode: (node: VisualNode) => void;
   onToggleFolder: (id: string) => void;
   onToggleFile: (id: string) => void;
-}
-
-const CAMERA_POLAR_ANGLE = Math.PI * 0.4;
-const CAMERA_POSITION: [number, number, number] = [0, 12, 35];
-const CAMERA_TARGET: [number, number, number] = [0, 1, 0];
-const MIN_CAMERA_DISTANCE = 9;
-const MAX_CAMERA_DISTANCE = 80;
-const VERTICAL_CENTER_MARGIN = 0.35;
-const AUTOLOCK_EASING = 7.5;
-const ROTATION_SENSITIVITY = 0.0045;
-
-function shortestAngleDifference(from: number, to: number) {
-  return Math.atan2(Math.sin(to - from), Math.cos(to - from));
-}
-
-function routedEdgePoints(
-  source: VisualNode,
-  target: VisualNode,
-  isImport: boolean,
-  lane: number,
-) {
-  const [sourceX, sourceY, sourceZ] = source.position;
-  const [targetX, targetY, targetZ] = target.position;
-  const deltaX = targetX - sourceX;
-  const deltaY = targetY - sourceY;
-  const deltaZ = targetZ - sourceZ;
-  const distance = Math.max(0.001, Math.hypot(deltaX, deltaY, deltaZ));
-  const clearance = Math.min(0.9, distance * 0.18);
-  const unitX = deltaX / distance;
-  const unitY = deltaY / distance;
-  const unitZ = deltaZ / distance;
-  const start: [number, number, number] = [
-    sourceX + unitX * clearance,
-    sourceY + unitY * clearance,
-    sourceZ + unitZ * clearance,
-  ];
-  const end: [number, number, number] = [
-    targetX - unitX * clearance,
-    targetY - unitY * clearance,
-    targetZ - unitZ * clearance,
-  ];
-
-  if (isImport) {
-    const routeY = Math.max(start[1], end[1]) + 1.15 + (lane % 3) * 0.22;
-    return {
-      start,
-      end,
-      midA: [start[0], routeY, start[2]] as [number, number, number],
-      midB: [end[0], routeY, end[2]] as [number, number, number],
-    };
-  }
-
-  const routeY = start[1] + (end[1] - start[1]) * 0.5;
-  return {
-    start,
-    end,
-    midA: [start[0], routeY, start[2]] as [number, number, number],
-    midB: [end[0], routeY, end[2]] as [number, number, number],
-  };
-}
-
-function VisualCard({
-  node,
-  selected,
-  open,
-  onSelect,
-  onToggle,
-}: {
-  node: VisualNode;
-  selected: boolean;
-  open: boolean;
-  onSelect: () => void;
-  onToggle?: () => void;
-}) {
-  const expandable = node.kind === "folder" || node.kind === "file";
-  const firstLetter =
-    node.label.replace(/^[^a-zA-Z0-9]+/, "").charAt(0).toUpperCase() || "•";
-
-  return (
-    <Html
-      position={node.position}
-      center
-      transform
-      sprite
-      distanceFactor={11}
-      zIndexRange={[40, 0]}
-    >
-      <button
-        type="button"
-        aria-label={`${node.kind} ${node.label}`}
-        className={`visual-node node-${node.kind} ${
-          selected ? "selected" : ""
-        }`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelect();
-        }}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          onSelect();
-          if (expandable) onToggle?.();
-        }}
-      >
-        <span className="node-letter">{firstLetter}</span>
-        <span className="node-tooltip">
-          <strong>{node.label}</strong>
-          <small>{node.subtitle}</small>
-        </span>
-        {expandable && (
-          <span className="node-expansion-state" aria-hidden="true">
-            {open ? "−" : "+"}
-          </span>
-        )}
-      </button>
-    </Html>
-  );
 }
 
 function GraphScene({
@@ -179,18 +78,13 @@ function GraphScene({
       max: highest - VERTICAL_CENTER_MARGIN,
     };
   }, [graph.nodes]);
-  const [ringRotations, setRingRotations] = useState<Record<string, number>>(
-    {},
-  );
+  const [ringRotations, setRingRotations] = useState<RingRotations>({});
   const ringRotationsRef = useRef(ringRotations);
-  const autolockAnimationRef = useRef<{
-    parentId?: string;
-    targetRotation?: number;
-    targetY: number;
-  } | null>(null);
+  const autolockAnimationRef = useRef<AutolockAnimation | null>(null);
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const { camera, gl } = useThree();
   ringRotationsRef.current = ringRotations;
+
   const rotationPivotId = useMemo(() => {
     if (!selectedId) return "project";
     if ((childrenByParent.get(selectedId)?.length ?? 0) > 0) return selectedId;
@@ -205,7 +99,7 @@ function GraphScene({
       : null;
     if (!selectedNode) return;
 
-    const animation: NonNullable<typeof autolockAnimationRef.current> = {
+    const animation: AutolockAnimation = {
       targetY: Math.min(
         verticalBounds.max,
         Math.max(verticalBounds.min, selectedNode.position[1]),
@@ -310,6 +204,7 @@ function GraphScene({
     () => new Map(renderedNodes.map((node) => [node.id, node])),
     [renderedNodes],
   );
+
   useEffect(() => {
     const controls = controlsRef.current;
     if (!controls) return;
@@ -333,131 +228,15 @@ function GraphScene({
     controls.update();
   }, [camera, verticalBounds]);
 
-  useEffect(() => {
-    const gestureSurface =
-      gl.domElement.closest<HTMLElement>(".visualizer-canvas") ??
-      gl.domElement.parentElement ??
-      gl.domElement;
-    let activePointerId: number | null = null;
-    let previousPointerX = 0;
-
-    const stopDragging = (pointerId?: number) => {
-      if (
-        activePointerId === null ||
-        (pointerId !== undefined && pointerId !== activePointerId)
-      ) {
-        return;
-      }
-      if (gl.domElement.hasPointerCapture(activePointerId)) {
-        gl.domElement.releasePointerCapture(activePointerId);
-      }
-      activePointerId = null;
-      gestureSurface.classList.remove("is-three-dragging");
-    };
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0) return;
-      activePointerId = event.pointerId;
-      previousPointerX = event.clientX;
-      gl.domElement.setPointerCapture(event.pointerId);
-      gestureSurface.classList.add("is-three-dragging");
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      if (event.pointerId !== activePointerId) return;
-      const deltaX = event.clientX - previousPointerX;
-      previousPointerX = event.clientX;
-      if (deltaX === 0) return;
-
-      event.preventDefault();
-      autolockAnimationRef.current = null;
-      setRingRotations((current) => ({
-        ...current,
-        [rotationPivotId]:
-          (current[rotationPivotId] ?? 0) +
-          deltaX * ROTATION_SENSITIVITY,
-      }));
-    };
-
-    const handlePointerEnd = (event: PointerEvent) => {
-      stopDragging(event.pointerId);
-    };
-    const handleWindowBlur = () => stopDragging();
-
-    const handleTrackpadGesture = (event: WheelEvent) => {
-      const controls = controlsRef.current;
-      if (!controls) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-
-      const distance = controls.getDistance();
-
-      if (event.ctrlKey) {
-        const direction = camera.position.clone().sub(controls.target);
-        if (direction.lengthSq() < 0.01) return;
-        const zoomFactor = Math.exp(event.deltaY * 0.012);
-        const nextDistance = Math.min(
-          controls.maxDistance,
-          Math.max(controls.minDistance, distance * zoomFactor),
-        );
-        direction.setLength(nextDistance);
-        camera.position.copy(controls.target).add(direction);
-        controls.update();
-        return;
-      }
-
-      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
-        autolockAnimationRef.current = null;
-        setRingRotations((current) => ({
-          ...current,
-          [rotationPivotId]:
-            (current[rotationPivotId] ?? 0) +
-            event.deltaX * ROTATION_SENSITIVITY,
-        }));
-        return;
-      }
-
-      autolockAnimationRef.current = null;
-      const requestedMovement = event.deltaY * 0.009 * (distance / 35);
-      const nextTargetY = Math.min(
-        verticalBounds.max,
-        Math.max(
-          verticalBounds.min,
-          controls.target.y + requestedMovement,
-        ),
-      );
-      const appliedMovement = nextTargetY - controls.target.y;
-      controls.target.y = nextTargetY;
-      camera.position.y += appliedMovement;
-      controls.update();
-    };
-
-    gestureSurface.addEventListener("wheel", handleTrackpadGesture, {
-      passive: false,
-      capture: true,
-    });
-    gl.domElement.addEventListener("pointerdown", handlePointerDown);
-    gl.domElement.addEventListener("pointermove", handlePointerMove);
-    gl.domElement.addEventListener("pointerup", handlePointerEnd);
-    gl.domElement.addEventListener("pointercancel", handlePointerEnd);
-    gl.domElement.addEventListener("lostpointercapture", handlePointerEnd);
-    window.addEventListener("blur", handleWindowBlur);
-    return () => {
-      stopDragging();
-      gestureSurface.removeEventListener("wheel", handleTrackpadGesture, {
-        capture: true,
-      });
-      gl.domElement.removeEventListener("pointerdown", handlePointerDown);
-      gl.domElement.removeEventListener("pointermove", handlePointerMove);
-      gl.domElement.removeEventListener("pointerup", handlePointerEnd);
-      gl.domElement.removeEventListener("pointercancel", handlePointerEnd);
-      gl.domElement.removeEventListener(
-        "lostpointercapture",
-        handlePointerEnd,
-      );
-      window.removeEventListener("blur", handleWindowBlur);
-    };
-  }, [camera, gl, rotationPivotId, verticalBounds]);
+  useThreeDGestures({
+    camera,
+    gl,
+    controlsRef,
+    rotationPivotId,
+    verticalBounds,
+    autolockAnimationRef,
+    setRingRotations,
+  });
 
   return (
     <>
@@ -522,7 +301,7 @@ function GraphScene({
         })}
 
         {renderedNodes.map((node) => (
-          <VisualCard
+          <ThreeDNode
             key={node.id}
             node={node}
             selected={selectedId === node.id}

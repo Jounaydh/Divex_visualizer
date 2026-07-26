@@ -16,7 +16,8 @@ models are intentionally language-neutral.
 - File drill-down into Flutter widgets, classes, functions, and methods
 - Direct source-code inspection
 - Guided and advanced inspection modes
-- 2D workflow alternative
+- 2D workflow with four flow directions and optional free positioning
+- Fullscreen viewing for both 2D and 3D
 - Built-in Flutter demonstration project
 
 ## Windows support
@@ -117,3 +118,43 @@ Future graph providers can add database schemas, tables, fields, foreign keys,
 ORM models, and code-to-database data flow without replacing the renderer.
 Local AI explanations are planned as a later, optional layer over the trusted
 parser output.
+
+## Source layout
+
+The renderer is organized by responsibility instead of keeping the full
+application flow in one component:
+
+```text
+src/
+  App.tsx                         project and view orchestration
+  analysis/                       language-neutral project analysis
+  components/
+    shell/                        title bar and project sidebar
+    visualizer/
+      VisualizerToolbar.tsx       view selection and workflow settings
+      two-d/                      2D canvas, nodes, connections, navigation
+      three-d/                    3D scene, nodes, geometry, gestures
+  hooks/
+    useElementFullscreen.ts       fullscreen lifecycle
+    useGraphExpansion.ts          2D/3D expansion rules
+  visualization/
+    buildVisualGraph.ts           shared visual graph construction
+    twoDLayout.ts                 pure 2D layout and edge-routing math
+  styles/
+    visualizer-toolbar.css        toolbar and View menu
+    two-d-visualizer.css          2D workflow canvas
+```
+
+The main data flow is:
+
+```text
+Project files
+  -> analyzeProject
+  -> shared project model
+  -> expansion state
+  -> buildVisualGraph
+  -> 2D layout or 3D scene
+```
+
+Pure graph and layout code stays outside React components, while pointer,
+keyboard, camera, and fullscreen behavior is kept in focused hooks.

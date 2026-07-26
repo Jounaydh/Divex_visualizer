@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+import "./styles/visualizer-toolbar.css";
+import "./styles/two-d-visualizer.css";
 
 const platform =
   window.divex?.platform ??
