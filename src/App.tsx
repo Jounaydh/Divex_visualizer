@@ -540,6 +540,7 @@ export default function App() {
             )}
             {!showCode && viewMode === "3d" && (
               <div className="canvas-help">
+                <span><i className="mouse-icon" /> Mouse drag: rotate</span>
                 <span><i className="mouse-icon" /> 2-finger sideways: rotate</span>
                 <span>2-finger vertical: move</span>
                 <span>Pinch: zoom</span>

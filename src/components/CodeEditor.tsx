@@ -62,6 +62,8 @@ export function CodeEditor({
     async () => undefined,
   );
   const isDart = file.extension === "dart";
+  const saveShortcut =
+    window.divex?.platform === "darwin" ? "⌘S" : "Ctrl+S";
   const currentEditorValue = () => editorRef.current?.getValue() ?? value;
 
   const replaceEditorValue = (nextValue: string) => {
@@ -335,7 +337,7 @@ export function CodeEditor({
         <span>Spaces: 2</span>
         <span className="editor-status-spacer" />
         <span>{cursorPosition}</span>
-        <span>⌘S to save</span>
+        <span>{saveShortcut} to save</span>
       </footer>
     </section>
   );

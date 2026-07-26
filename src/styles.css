@@ -69,6 +69,14 @@ button:focus-visible {
   -webkit-app-region: drag;
 }
 
+html[data-platform="win32"] .titlebar,
+html[data-platform="linux"] .titlebar {
+  padding-left: 15px;
+  padding-right: calc(
+    100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%) + 12px
+  );
+}
+
 .window-drag-region {
   position: absolute;
   inset: 0;
@@ -636,6 +644,11 @@ button:focus-visible {
 .three-canvas {
   position: absolute !important;
   inset: 0;
+  cursor: grab;
+}
+
+.visualizer-canvas.is-three-dragging .three-canvas {
+  cursor: grabbing;
 }
 
 .three-loading {

@@ -28,6 +28,7 @@ const MIN_CAMERA_DISTANCE = 9;
 const MAX_CAMERA_DISTANCE = 80;
 const VERTICAL_CENTER_MARGIN = 0.35;
 const AUTOLOCK_EASING = 7.5;
+const ROTATION_SENSITIVITY = 0.0045;
 
 function shortestAngleDifference(from: number, to: number) {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
@@ -337,6 +338,51 @@ function GraphScene({
       gl.domElement.closest<HTMLElement>(".visualizer-canvas") ??
       gl.domElement.parentElement ??
       gl.domElement;
+    let activePointerId: number | null = null;
+    let previousPointerX = 0;
+
+    const stopDragging = (pointerId?: number) => {
+      if (
+        activePointerId === null ||
+        (pointerId !== undefined && pointerId !== activePointerId)
+      ) {
+        return;
+      }
+      if (gl.domElement.hasPointerCapture(activePointerId)) {
+        gl.domElement.releasePointerCapture(activePointerId);
+      }
+      activePointerId = null;
+      gestureSurface.classList.remove("is-three-dragging");
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      activePointerId = event.pointerId;
+      previousPointerX = event.clientX;
+      gl.domElement.setPointerCapture(event.pointerId);
+      gestureSurface.classList.add("is-three-dragging");
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== activePointerId) return;
+      const deltaX = event.clientX - previousPointerX;
+      previousPointerX = event.clientX;
+      if (deltaX === 0) return;
+
+      event.preventDefault();
+      autolockAnimationRef.current = null;
+      setRingRotations((current) => ({
+        ...current,
+        [rotationPivotId]:
+          (current[rotationPivotId] ?? 0) +
+          deltaX * ROTATION_SENSITIVITY,
+      }));
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      stopDragging(event.pointerId);
+    };
+    const handleWindowBlur = () => stopDragging();
 
     const handleTrackpadGesture = (event: WheelEvent) => {
       const controls = controlsRef.current;
@@ -365,7 +411,8 @@ function GraphScene({
         setRingRotations((current) => ({
           ...current,
           [rotationPivotId]:
-            (current[rotationPivotId] ?? 0) + event.deltaX * 0.0045,
+            (current[rotationPivotId] ?? 0) +
+            event.deltaX * ROTATION_SENSITIVITY,
         }));
         return;
       }
@@ -389,10 +436,26 @@ function GraphScene({
       passive: false,
       capture: true,
     });
+    gl.domElement.addEventListener("pointerdown", handlePointerDown);
+    gl.domElement.addEventListener("pointermove", handlePointerMove);
+    gl.domElement.addEventListener("pointerup", handlePointerEnd);
+    gl.domElement.addEventListener("pointercancel", handlePointerEnd);
+    gl.domElement.addEventListener("lostpointercapture", handlePointerEnd);
+    window.addEventListener("blur", handleWindowBlur);
     return () => {
+      stopDragging();
       gestureSurface.removeEventListener("wheel", handleTrackpadGesture, {
         capture: true,
       });
+      gl.domElement.removeEventListener("pointerdown", handlePointerDown);
+      gl.domElement.removeEventListener("pointermove", handlePointerMove);
+      gl.domElement.removeEventListener("pointerup", handlePointerEnd);
+      gl.domElement.removeEventListener("pointercancel", handlePointerEnd);
+      gl.domElement.removeEventListener(
+        "lostpointercapture",
+        handlePointerEnd,
+      );
+      window.removeEventListener("blur", handleWindowBlur);
     };
   }, [camera, gl, rotationPivotId, verticalBounds]);
 

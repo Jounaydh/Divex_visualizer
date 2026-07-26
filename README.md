@@ -19,21 +19,78 @@ models are intentionally language-neutral.
 - 2D workflow alternative
 - Built-in Flutter demonstration project
 
+## Windows support
+
+The packaged application runs on 64-bit Windows 10 or 11. End users do not
+need Node.js; the installer and portable executable include the Electron
+runtime.
+
+Development and packaging requirements:
+
+- Node.js 22.12 or newer (the current LTS release is recommended)
+- npm, which is included with Node.js
+- Optional: the Flutter SDK if you want to use **Format** or
+  **Flutter Analyze**
+
+The application itself uses Electron, React, and TypeScript, so it does not
+need a language rewrite for Windows. Project paths, Windows window controls,
+keyboard shortcuts, and the `.bat` launchers supplied by the Windows Flutter
+SDK are handled by the desktop process.
+
+To enable the optional Flutter tools, add the Flutter SDK's `bin` directory to
+your Windows user `PATH`, open a new PowerShell window, and verify:
+
+```powershell
+flutter --version
+dart --version
+```
+
 ## Run locally
 
-```bash
-npm install
+From PowerShell in the project directory:
+
+```powershell
+npm ci
 npm run dev
 ```
 
 `npm run dev` starts the renderer and opens the Electron desktop window.
 
+To build the renderer and run it without the development server:
+
+```powershell
+npm start
+```
+
 Validation commands:
 
-```bash
+```powershell
 npm run typecheck
 npm run build
 ```
+
+## Build for Windows
+
+Create both an assisted installer and a no-install portable executable:
+
+```powershell
+npm run dist:win
+```
+
+The files are written to `release`:
+
+- `Divex Visualizer-Setup-<version>-x64.exe`
+- `Divex Visualizer-Portable-<version>-x64.exe`
+
+For a faster unpacked build that is useful for testing:
+
+```powershell
+npm run pack:win
+```
+
+Local builds are unsigned. Windows SmartScreen can therefore warn when someone
+downloads the executable on another PC. A public release should be signed with
+a trusted Windows code-signing certificate.
 
 ## Analyzer architecture
 

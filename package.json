@@ -1,15 +1,21 @@
 {
   "name": "divex-visualizer",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "A beginner-friendly 3D code visualizer for understanding projects, dependencies, and execution structure.",
   "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "desktop": "electron .",
-    "typecheck": "tsc -b --pretty false"
+    "start": "npm run build && electron .",
+    "desktop": "npm run start",
+    "typecheck": "tsc -b --pretty false",
+    "pack:win": "npm run build && node scripts/build-windows.cjs dir",
+    "dist:win": "npm run build && node scripts/build-windows.cjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.4",
@@ -27,13 +33,53 @@
     "@types/three": "^0.179.0",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.0",
-    "electron": "^37.2.6",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "typescript": "~5.8.3",
     "vite": "^7.1.2",
     "wait-on": "^8.0.4"
   },
+  "build": {
+    "appId": "com.divex.visualizer",
+    "productName": "Divex Visualizer",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+    }
+  },
   "allowScripts": {
-    "electron@37.10.3": true,
+    "electron@43.2.0": true,
     "esbuild@0.28.1": true
   }
 }

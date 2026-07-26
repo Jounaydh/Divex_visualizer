@@ -1,12 +1,11 @@
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
-const { execFile } = require("node:child_process");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
-const { promisify } = require("node:util");
+const { runTool } = require("./tool-runner.cjs");
 
-const execFileAsync = promisify(execFile);
-
-const isDevelopment = !app.isPackaged;
+const APP_ID = "com.divex.visualizer";
+const isDevelopment = !app.isPackaged && process.argv.includes("--dev");
 const supportedExtensions = new Set([
   ".dart",
   ".java",
@@ -32,9 +31,11 @@ const MAX_FILE_SIZE = 2 * 1024 * 1024;
 function resolveProjectFile(rootPath, relativePath) {
   const resolvedRoot = path.resolve(rootPath);
   const resolvedFile = path.resolve(resolvedRoot, relativePath);
+  const pathFromRoot = path.relative(resolvedRoot, resolvedFile);
   if (
-    resolvedFile !== resolvedRoot &&
-    !resolvedFile.startsWith(`${resolvedRoot}${path.sep}`)
+    pathFromRoot === ".." ||
+    pathFromRoot.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(pathFromRoot)
   ) {
     throw new Error("The requested file is outside the opened project.");
   }
@@ -56,26 +57,39 @@ async function readProjectFiles(rootPath) {
 
   async function visit(directory) {
     if (files.length >= MAX_FILES) return;
-    const entries = await fs.readdir(directory, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === "EACCES" || error?.code === "EPERM") return;
+      throw error;
+    }
 
     for (const entry of entries) {
       if (files.length >= MAX_FILES) break;
       if (entry.name.startsWith(".") && entry.name !== ".env") continue;
       const absolutePath = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name)) await visit(absolutePath);
+        if (!ignoredDirectories.has(entry.name.toLowerCase())) {
+          await visit(absolutePath);
+        }
         continue;
       }
 
       const extension = path.extname(entry.name).toLowerCase();
       if (!supportedExtensions.has(extension)) continue;
-      const stats = await fs.stat(absolutePath);
-      if (stats.size > MAX_FILE_SIZE) continue;
-      const content = await fs.readFile(absolutePath, "utf8");
-      files.push({
-        path: path.relative(rootPath, absolutePath).split(path.sep).join("/"),
-        content,
-      });
+      try {
+        const stats = await fs.stat(absolutePath);
+        if (stats.size > MAX_FILE_SIZE) continue;
+        const content = await fs.readFile(absolutePath, "utf8");
+        files.push({
+          path: path.relative(rootPath, absolutePath).split(path.sep).join("/"),
+          content,
+        });
+      } catch (error) {
+        if (error?.code !== "EACCES" && error?.code !== "EPERM") throw error;
+      }
     }
   }
 
@@ -84,14 +98,28 @@ async function readProjectFiles(rootPath) {
 }
 
 function createWindow() {
+  const platformTitleBar =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 18, y: 16 },
+        }
+      : {
+          titleBarStyle: "hidden",
+          titleBarOverlay: {
+            color: "#141519",
+            symbolColor: "#d7d9df",
+            height: 52,
+          },
+        };
   const window = new BrowserWindow({
     width: 1510,
     height: 940,
     minWidth: 1120,
     minHeight: 720,
     backgroundColor: "#101114",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    trafficLightPosition: { x: 18, y: 16 },
+    autoHideMenuBar: true,
+    ...platformTitleBar,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -138,18 +166,24 @@ ipcMain.handle("project:save-file", async (_event, args) => {
 });
 
 ipcMain.handle("project:format-dart", async (_event, args) => {
+  let temporaryDirectory;
   try {
     const filePath = resolveProjectFile(args.rootPath, args.filePath);
     if (path.extname(filePath).toLowerCase() !== ".dart") {
       return { success: false, output: "Dart formatting requires a .dart file." };
     }
-    await fs.writeFile(filePath, args.content, "utf8");
-    const result = await execFileAsync("dart", ["format", filePath], {
-      cwd: path.resolve(args.rootPath),
+    temporaryDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "divex-format-"),
+    );
+    const temporaryFile = path.join(temporaryDirectory, "input.dart");
+    await fs.writeFile(temporaryFile, args.content, "utf8");
+    const result = await runTool("dart", ["format", "input.dart"], {
+      cwd: temporaryDirectory,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 30000,
     });
-    const content = await fs.readFile(filePath, "utf8");
+    const content = await fs.readFile(temporaryFile, "utf8");
+    await fs.writeFile(filePath, content, "utf8");
     return {
       success: true,
       output: result.stdout || "Dart formatting completed.",
@@ -160,12 +194,16 @@ ipcMain.handle("project:format-dart", async (_event, args) => {
       error,
       "The Dart SDK was not found. Install Flutter or add dart to PATH.",
     );
+  } finally {
+    if (temporaryDirectory) {
+      await fs.rm(temporaryDirectory, { recursive: true, force: true });
+    }
   }
 });
 
 ipcMain.handle("project:analyze-flutter", async (_event, args) => {
   try {
-    const result = await execFileAsync(
+    const result = await runTool(
       "flutter",
       ["analyze", "--no-pub"],
       {
@@ -185,6 +223,10 @@ ipcMain.handle("project:analyze-flutter", async (_event, args) => {
     );
   }
 });
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(APP_ID);
+}
 
 app.whenReady().then(() => {
   createWindow();
