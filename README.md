@@ -35,6 +35,13 @@ npm run typecheck
 npm run build
 ```
 
+## Documentation
+
+- [Development and architecture guide](docs/DEVELOPMENT.md)
+- `src/app/` contains the application shell and view orchestration.
+- `src/analysis/languages/` is the extension point for language analyzers.
+- `src/components/three/` contains focused parts of the 3D renderer.
+
 ## Analyzer architecture
 
 Every language add-on will convert its source files into the same internal
