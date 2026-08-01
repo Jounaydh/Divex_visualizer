@@ -13,7 +13,6 @@ import { useEffect, useState } from "react";
 import type {
   AnalyzedFile,
   AnalyzedProject,
-  ExperienceMode,
   VisualNode,
 } from "../types";
 
@@ -21,7 +20,6 @@ interface InspectorPanelProps {
   project: AnalyzedProject;
   selectedNode: VisualNode | null;
   selectedFile: AnalyzedFile | null;
-  mode: ExperienceMode;
   showCode: boolean;
   onToggleCode: () => void;
   onClose: () => void;
@@ -36,7 +34,6 @@ export function InspectorPanel({
   project,
   selectedNode,
   selectedFile,
-  mode,
   showCode,
   onToggleCode,
   onClose,
@@ -82,12 +79,15 @@ export function InspectorPanel({
   return (
     <aside className="inspector">
       <div className="inspector-head">
-        <div className={`inspector-kind kind-${selectedNode.kind}`}>
-          {selectedNode.kind === "file" ? (
-            <FileCode2 size={16} />
-          ) : (
-            <Braces size={16} />
-          )}
+        <div className="inspector-head-title">
+          <div className={`inspector-kind kind-${selectedNode.kind}`}>
+            {selectedNode.kind === "file" ? (
+              <FileCode2 size={16} />
+            ) : (
+              <Braces size={16} />
+            )}
+          </div>
+          <span>File properties</span>
         </div>
         <button type="button" className="icon-button" onClick={onClose}>
           <X size={16} />
@@ -126,7 +126,7 @@ export function InspectorPanel({
           <section className="inspector-section">
             <div className="section-label">
               <Network size={14} />
-              <span>Branches to</span>
+              <span>Dependencies</span>
               <small>{dependencies.length}</small>
             </div>
             {dependencies.length === 0 ? (
@@ -147,6 +147,29 @@ export function InspectorPanel({
                   <p>
                     {relationshipExplanation(selectedFile, dependency)}
                   </p>
+                </button>
+              ))
+            )}
+          </section>
+
+          <section className="inspector-section">
+            <div className="section-label">
+              <Network size={14} />
+              <span>Referenced by</span>
+              <small>{usedBy.length}</small>
+            </div>
+            {usedBy.length === 0 ? (
+              <p className="quiet">No incoming project references found.</p>
+            ) : (
+              usedBy.map((source) => (
+                <button
+                  type="button"
+                  className="advanced-row"
+                  key={source.id}
+                  onClick={() => onSelectPath(source.path)}
+                >
+                  <span>{source.path}</span>
+                  <ArrowRight size={12} />
                 </button>
               ))
             )}
@@ -192,31 +215,6 @@ export function InspectorPanel({
               </div>
             )}
           </section>
-
-          {mode === "advanced" && (
-            <section className="inspector-section">
-              <div className="section-label">
-                <Network size={14} />
-                <span>Referenced by</span>
-                <small>{usedBy.length}</small>
-              </div>
-              {usedBy.length === 0 ? (
-                <p className="quiet">No incoming project references found.</p>
-              ) : (
-                usedBy.map((source) => (
-                  <button
-                    type="button"
-                    className="advanced-row"
-                    key={source.id}
-                    onClick={() => onSelectPath(source.path)}
-                  >
-                    <span>{source.path}</span>
-                    <ArrowRight size={12} />
-                  </button>
-                ))
-              )}
-            </section>
-          )}
         </>
       )}
     </aside>

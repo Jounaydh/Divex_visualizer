@@ -1,57 +1,54 @@
 import {
-  Box,
-  BrainCircuit,
-  ChevronDown,
-  FolderOpen,
-  Move3d,
-  Power,
-  RotateCcw,
-  ScanSearch,
-  Sparkles,
-  Workflow,
-} from "lucide-react";
-import { lazy, Suspense, useMemo, useState } from "react";
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { analyzeProject } from "./analysis/analyzeProject";
-import { BrandMark } from "./components/BrandMark";
-import { CodeEditor } from "./components/CodeEditor";
-import { FileExplorer } from "./components/FileExplorer";
+import { AppHeader } from "./app/AppHeader";
+import {
+  buildThreeDExpansion,
+  fileLayer,
+  folderIdsForPath,
+  folderLayer,
+} from "./app/expansion";
+import { ProjectSidebar } from "./app/ProjectSidebar";
+import { VisualizerWorkspace } from "./app/VisualizerWorkspace";
+import { WorkspaceResizer } from "./app/WorkspaceResizer";
 import { InspectorPanel } from "./components/InspectorPanel";
-import { TwoDVisualizer } from "./components/TwoDVisualizer";
+import type { ExplorerEntry } from "./components/FileExplorer";
+import { DEFAULT_TWO_D_ZOOM } from "./config/ui";
 import { sampleProject } from "./data/sampleProject";
 import type {
   AnalyzedFile,
   ExperienceMode,
   FolderNode,
   ProjectPayload,
+  ProjectTask,
   ViewMode,
   VisualNode,
+  WorkflowDirection,
+  WorkflowPosition,
 } from "./types";
 
-const ThreeVisualizer = lazy(() =>
-  import("./components/ThreeVisualizer").then((module) => ({
-    default: module.ThreeVisualizer,
-  })),
-);
+const MIN_EXPLORER_WIDTH = 190;
+const MAX_EXPLORER_WIDTH = 480;
+const MIN_INSPECTOR_WIDTH = 280;
+const MAX_INSPECTOR_WIDTH = 620;
+const MIN_VISUALIZER_WIDTH = 420;
+const WORKSPACE_RESIZERS_WIDTH = 12;
 
-const folderIdsForPath = (path: string) => {
-  const parts = path.split("/");
-  parts.pop();
-  return parts.map(
-    (_, index) => `folder:${parts.slice(0, index + 1).join("/")}`,
-  );
-};
+interface ExplorerClipboard {
+  mode: "cut" | "copy";
+  entry: ExplorerEntry;
+}
 
-const folderLayer = (id: string) =>
-  id
-    .slice("folder:".length)
-    .split("/")
-    .filter(Boolean).length;
-
-const fileLayer = (id: string) =>
-  id
-    .slice("file:".length)
-    .split("/")
-    .filter(Boolean).length;
+function defaultPaneWidths(workspaceWidth: number) {
+  return workspaceWidth <= 1240
+    ? { explorer: 240, inspector: 340 }
+    : { explorer: 280, inspector: 380 };
+}
 
 export default function App() {
   const [payload, setPayload] = useState<ProjectPayload>(sampleProject);
@@ -59,7 +56,13 @@ export default function App() {
   const [experienceMode, setExperienceMode] =
     useState<ExperienceMode>("beginner");
   const [viewMode, setViewMode] = useState<ViewMode>("2d");
-  const [twoDZoom, setTwoDZoom] = useState(1.4);
+  const [workflowDirection, setWorkflowDirection] =
+    useState<WorkflowDirection>("top-down");
+  const [freePositioning, setFreePositioning] = useState(false);
+  const [twoDZoom, setTwoDZoom] = useState(DEFAULT_TWO_D_ZOOM);
+  const [twoDPositions, setTwoDPositions] = useState<
+    Record<string, WorkflowPosition>
+  >({});
   const [expandedFolders, setExpandedFolders] = useState(
     () => new Set(["folder:lib"]),
   );
@@ -70,9 +73,98 @@ export default function App() {
   const [showCode, setShowCode] = useState(false);
   const [cameraResetKey, setCameraResetKey] = useState(0);
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [openingProject, setOpeningProject] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [projectIsLocal, setProjectIsLocal] = useState(false);
+  const [explorerClipboard, setExplorerClipboard] =
+    useState<ExplorerClipboard | null>(null);
+  const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [workspaceWidth, setWorkspaceWidth] = useState(
+    () => window.innerWidth,
+  );
+  const [paneWidths, setPaneWidths] = useState(() =>
+    defaultPaneWidths(window.innerWidth),
+  );
+
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      if (entry) setWorkspaceWidth(entry.contentRect.width);
+    });
+    resizeObserver.observe(workspace);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setPaneWidths((current) => {
+      const availableForSidebars = Math.max(
+        MIN_EXPLORER_WIDTH + MIN_INSPECTOR_WIDTH,
+        workspaceWidth -
+          MIN_VISUALIZER_WIDTH -
+          WORKSPACE_RESIZERS_WIDTH,
+      );
+      if (current.explorer + current.inspector <= availableForSidebars) {
+        return current;
+      }
+
+      let overflow =
+        current.explorer + current.inspector - availableForSidebars;
+      const inspector = Math.max(
+        MIN_INSPECTOR_WIDTH,
+        current.inspector - overflow,
+      );
+      overflow -= current.inspector - inspector;
+      const explorer = Math.max(
+        MIN_EXPLORER_WIDTH,
+        current.explorer - overflow,
+      );
+      return { explorer, inspector };
+    });
+  }, [workspaceWidth]);
+
+  useEffect(() => {
+    if (!projectIsLocal || !window.divex) {
+      setProjectTasks([]);
+      return;
+    }
+    let cancelled = false;
+    void window.divex
+      .listProjectTasks({ rootPath: payload.rootPath })
+      .then((result) => {
+        if (!cancelled) setProjectTasks(result.tasks ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectTasks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payload.files, payload.rootPath, projectIsLocal]);
+
+  const explorerMaxWidth = Math.max(
+    MIN_EXPLORER_WIDTH,
+    Math.min(
+      MAX_EXPLORER_WIDTH,
+      workspaceWidth -
+        paneWidths.inspector -
+        MIN_VISUALIZER_WIDTH -
+        WORKSPACE_RESIZERS_WIDTH,
+    ),
+  );
+  const inspectorMaxWidth = Math.max(
+    MIN_INSPECTOR_WIDTH,
+    Math.min(
+      MAX_INSPECTOR_WIDTH,
+      workspaceWidth -
+        paneWidths.explorer -
+        MIN_VISUALIZER_WIDTH -
+        WORKSPACE_RESIZERS_WIDTH,
+    ),
+  );
 
   const selectedFile = useMemo(() => {
     if (!selectedNode?.path) return null;
@@ -81,44 +173,37 @@ export default function App() {
     );
   }, [project.files, selectedNode]);
 
-  const threeDExpansion = useMemo(() => {
-    const choices = new Map<
-      number,
-      { id: string; kind: "folder" | "file" }
-    >();
-    expandedFolders.forEach((id) =>
-      choices.set(folderLayer(id), { id, kind: "folder" }),
-    );
-    expandedFiles.forEach((id) =>
-      choices.set(fileLayer(id), { id, kind: "file" }),
-    );
+  const threeDExpansion = useMemo(
+    () =>
+      buildThreeDExpansion(expandedFolders, expandedFiles, selectedNode),
+    [expandedFiles, expandedFolders, selectedNode],
+  );
 
-    if (
-      selectedNode?.kind === "folder" &&
-      expandedFolders.has(selectedNode.id)
-    ) {
-      choices.set(folderLayer(selectedNode.id), {
-        id: selectedNode.id,
-        kind: "folder",
-      });
-    } else if (
-      selectedNode?.kind === "file" &&
-      expandedFiles.has(selectedNode.id)
-    ) {
-      choices.set(fileLayer(selectedNode.id), {
-        id: selectedNode.id,
-        kind: "file",
-      });
-    }
+  const showTransientNotice = (message: string, duration = 3500) => {
+    setNotice(message);
+    window.setTimeout(() => setNotice(null), duration);
+  };
 
-    const folders = new Set<string>();
-    const files = new Set<string>();
-    choices.forEach((choice) => {
-      if (choice.kind === "folder") folders.add(choice.id);
-      else files.add(choice.id);
-    });
-    return { folders, files };
-  }, [expandedFiles, expandedFolders, selectedNode]);
+  const resetWorkspace = (
+    nextProject: ProjectPayload,
+    isLocalProject = false,
+  ) => {
+    const firstTopLevelFolder = nextProject.files
+      .map((file) => file.path.split("/"))
+      .find((parts) => parts.length > 1)?.[0];
+
+    setPayload(nextProject);
+    setExpandedFolders(
+      new Set(firstTopLevelFolder ? [`folder:${firstTopLevelFolder}`] : []),
+    );
+    setExpandedFiles(new Set());
+    setTwoDZoom(DEFAULT_TWO_D_ZOOM);
+    setTwoDPositions({});
+    setSelectedNode(null);
+    setShowCode(false);
+    setCameraResetKey((value) => value + 1);
+    setProjectIsLocal(isLocalProject);
+  };
 
   const toggleFolderAtLayer = (id: string) => {
     const isOpen = threeDExpansion.folders.has(id);
@@ -256,309 +341,529 @@ export default function App() {
 
   const openProject = async () => {
     setFileMenuOpen(false);
+    setTerminalMenuOpen(false);
     setProjectMenuOpen(false);
     if (!window.divex) {
-      setNotice("Folder selection is available in the Divex desktop window.");
-      window.setTimeout(() => setNotice(null), 3500);
+      showTransientNotice(
+        "Folder selection is available in the Divex desktop window.",
+      );
       return;
     }
 
     setOpeningProject(true);
     try {
       const nextProject = await window.divex.chooseProject();
-      if (!nextProject) return;
-      setPayload(nextProject);
-      const firstTopLevelFolder = nextProject.files
-        .map((file) => file.path.split("/"))
-        .find((parts) => parts.length > 1)?.[0];
-      setExpandedFolders(
-        new Set(firstTopLevelFolder ? [`folder:${firstTopLevelFolder}`] : []),
-      );
-      setExpandedFiles(new Set());
-      setTwoDZoom(1.4);
-      setSelectedNode(null);
-      setShowCode(false);
-      setCameraResetKey((value) => value + 1);
+      if (nextProject) resetWorkspace(nextProject, true);
     } catch (error) {
-      setNotice(
-        error instanceof Error ? error.message : "The project could not be opened.",
+      showTransientNotice(
+        error instanceof Error
+          ? error.message
+          : "The project could not be opened.",
+        4500,
       );
-      window.setTimeout(() => setNotice(null), 4500);
     } finally {
       setOpeningProject(false);
     }
   };
 
+  const renameExplorerEntry = async (
+    entry: ExplorerEntry,
+    newName: string,
+  ) => {
+    if (
+      !newName ||
+      newName === "." ||
+      newName === ".." ||
+      newName.includes("/") ||
+      newName.includes("\\")
+    ) {
+      showTransientNotice("Enter a name without folder separators.");
+      return;
+    }
+
+    if (projectIsLocal && window.divex) {
+      const result = await window.divex.renameProjectEntry({
+        rootPath: payload.rootPath,
+        entryPath: entry.path,
+        newName,
+      });
+      if (result.success && result.project) {
+        resetWorkspace(result.project, true);
+      }
+      showTransientNotice(result.output, result.success ? 3500 : 4500);
+      return;
+    }
+
+    const parts = entry.path.split("/");
+    parts[parts.length - 1] = newName;
+    const nextPath = parts.join("/");
+    const prefix = `${entry.path}/`;
+    const nextPrefix = `${nextPath}/`;
+    const collides = payload.files.some((file) => {
+      const belongsToEntry =
+        file.path === entry.path || file.path.startsWith(prefix);
+      if (belongsToEntry) return false;
+      return (
+        file.path === nextPath ||
+        file.path.startsWith(nextPrefix)
+      );
+    });
+    if (collides) {
+      showTransientNotice(`“${newName}” already exists in this folder.`);
+      return;
+    }
+    const nextProject = {
+      ...payload,
+      files: payload.files.map((file) => {
+        if (entry.kind === "file" && file.path === entry.path) {
+          return { ...file, path: nextPath };
+        }
+        if (entry.kind === "folder" && file.path.startsWith(prefix)) {
+          return {
+            ...file,
+            path: `${nextPrefix}${file.path.slice(prefix.length)}`,
+          };
+        }
+        return file;
+      }),
+    };
+    resetWorkspace(nextProject);
+    showTransientNotice(`Renamed to ${newName} in this demo session.`);
+  };
+
+  const deleteExplorerEntry = async (entry: ExplorerEntry) => {
+    if (projectIsLocal && window.divex) {
+      const result = await window.divex.deleteProjectEntry({
+        rootPath: payload.rootPath,
+        entryPath: entry.path,
+        entryKind: entry.kind,
+      });
+      if (result.cancelled) return;
+      if (result.success && result.project) {
+        resetWorkspace(result.project, true);
+      }
+      showTransientNotice(result.output, result.success ? 3500 : 4500);
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete “${entry.name}” from this demo session?`,
+    );
+    if (!confirmed) return;
+    const prefix = `${entry.path}/`;
+    const nextProject = {
+      ...payload,
+      files: payload.files.filter((file) =>
+        entry.kind === "file"
+          ? file.path !== entry.path
+          : !file.path.startsWith(prefix),
+      ),
+    };
+    resetWorkspace(nextProject);
+    showTransientNotice(`Deleted ${entry.name} from this demo session.`);
+  };
+
+  const copyExplorerEntryPath = async (
+    entry: ExplorerEntry,
+    relative: boolean,
+  ) => {
+    if (projectIsLocal && window.divex) {
+      const result = await window.divex.copyProjectEntryPath({
+        rootPath: payload.rootPath,
+        entryPath: entry.path,
+        relative,
+      });
+      showTransientNotice(result.output);
+      return;
+    }
+    await navigator.clipboard.writeText(entry.path);
+    showTransientNotice("Relative path copied.");
+  };
+
+  const revealExplorerEntry = async (entry: ExplorerEntry) => {
+    if (!projectIsLocal || !window.divex) return;
+    const result = await window.divex.revealProjectEntry({
+      rootPath: payload.rootPath,
+      entryPath: entry.path,
+    });
+    if (!result.success) showTransientNotice(result.output, 4500);
+  };
+
+  const refreshExplorer = async () => {
+    if (!projectIsLocal || !window.divex) {
+      resetWorkspace(sampleProject);
+      showTransientNotice("Demo project restored.");
+      return;
+    }
+    const result = await window.divex.refreshProject({
+      rootPath: payload.rootPath,
+    });
+    if (result.success && result.project) {
+      resetWorkspace(result.project, true);
+    }
+    showTransientNotice(result.output, result.success ? 3500 : 4500);
+  };
+
+  const openExplorerEntry = async (entry: ExplorerEntry) => {
+    if (!projectIsLocal || !window.divex) {
+      showTransientNotice("Open a local project to use an external app.");
+      return;
+    }
+    const result = await window.divex.openProjectEntry({
+      rootPath: payload.rootPath,
+      entryPath: entry.path,
+    });
+    if (!result.success) showTransientNotice(result.output, 4500);
+  };
+
+  const openExplorerTerminal = async (entry: ExplorerEntry) => {
+    if (!projectIsLocal || !window.divex) {
+      showTransientNotice("Open a local project to launch a terminal.");
+      return;
+    }
+    const result = await window.divex.openProjectTerminal({
+      rootPath: payload.rootPath,
+      entryPath: entry.path,
+      entryKind: entry.kind,
+    });
+    if (!result.success) showTransientNotice(result.output, 4500);
+  };
+
+  const shareExplorerEntry = async (entry: ExplorerEntry) => {
+    if (!projectIsLocal || !window.divex) return;
+    const result = await window.divex.shareProjectEntry({
+      rootPath: payload.rootPath,
+      entryPath: entry.path,
+    });
+    if (!result.success) showTransientNotice(result.output, 4500);
+  };
+
+  const stageExplorerEntry = (
+    entry: ExplorerEntry,
+    mode: "cut" | "copy",
+  ) => {
+    setExplorerClipboard({ entry, mode });
+    showTransientNotice(
+      `${mode === "cut" ? "Cut" : "Copied"} ${entry.name}. Choose a destination and Paste.`,
+    );
+  };
+
+  const pasteExplorerEntry = async (target: ExplorerEntry) => {
+    if (!explorerClipboard) return;
+    const { entry: source, mode } = explorerClipboard;
+
+    if (projectIsLocal && window.divex) {
+      const result = await window.divex.pasteProjectEntry({
+        rootPath: payload.rootPath,
+        sourcePath: source.path,
+        sourceKind: source.kind,
+        targetPath: target.path,
+        targetKind: target.kind,
+        mode,
+      });
+      if (result.success && result.project) {
+        resetWorkspace(result.project, true);
+        if (mode === "cut") setExplorerClipboard(null);
+      }
+      showTransientNotice(result.output, result.success ? 3500 : 4500);
+      return;
+    }
+
+    const sourcePrefix = `${source.path}/`;
+    const destinationDirectory =
+      target.kind === "folder"
+        ? target.path
+        : target.path.split("/").slice(0, -1).join("/");
+    if (
+      source.kind === "folder" &&
+      (destinationDirectory === source.path ||
+        destinationDirectory.startsWith(sourcePrefix))
+    ) {
+      showTransientNotice("A folder cannot be pasted inside itself.");
+      return;
+    }
+
+    const joinPath = (directory: string, name: string) =>
+      directory ? `${directory}/${name}` : name;
+    const entryExists = (candidate: string) =>
+      payload.files.some(
+        (file) =>
+          file.path === candidate ||
+          file.path.startsWith(`${candidate}/`),
+      );
+    const extensionIndex =
+      source.kind === "file" ? source.name.lastIndexOf(".") : -1;
+    const baseName =
+      extensionIndex > 0
+        ? source.name.slice(0, extensionIndex)
+        : source.name;
+    const extension =
+      extensionIndex > 0 ? source.name.slice(extensionIndex) : "";
+    let destinationPath = joinPath(destinationDirectory, source.name);
+
+    if (mode === "copy") {
+      let copyIndex = 1;
+      while (entryExists(destinationPath)) {
+        const suffix = copyIndex === 1 ? " copy" : ` copy ${copyIndex}`;
+        destinationPath = joinPath(
+          destinationDirectory,
+          `${baseName}${suffix}${extension}`,
+        );
+        copyIndex += 1;
+      }
+    } else if (destinationPath === source.path) {
+      showTransientNotice("The item is already in this folder.");
+      return;
+    } else if (entryExists(destinationPath)) {
+      showTransientNotice(`“${source.name}” already exists here.`);
+      return;
+    }
+
+    const sourceFiles = payload.files.filter((file) =>
+      source.kind === "file"
+        ? file.path === source.path
+        : file.path.startsWith(sourcePrefix),
+    );
+    if (sourceFiles.length === 0) {
+      showTransientNotice("The copied item is no longer available.");
+      return;
+    }
+    const moveFile = (file: ProjectPayload["files"][number]) => ({
+      ...file,
+      path:
+        source.kind === "file"
+          ? destinationPath
+          : `${destinationPath}/${file.path.slice(sourcePrefix.length)}`,
+    });
+    const nextProject = {
+      ...payload,
+      files:
+        mode === "copy"
+          ? [...payload.files, ...sourceFiles.map(moveFile)]
+          : payload.files.map((file) =>
+              sourceFiles.includes(file) ? moveFile(file) : file,
+            ),
+    };
+    resetWorkspace(nextProject);
+    if (mode === "cut") setExplorerClipboard(null);
+    showTransientNotice(
+      `${mode === "copy" ? "Copied" : "Moved"} ${source.name} in this demo session.`,
+    );
+  };
+
+  const openProjectTerminal = async () => {
+    if (!projectIsLocal || !window.divex) {
+      showTransientNotice("Open a local project to launch a terminal.");
+      return;
+    }
+    const result = await window.divex.openProjectTerminal({
+      rootPath: payload.rootPath,
+    });
+    if (!result.success) showTransientNotice(result.output, 4500);
+  };
+
+  const runProjectTask = async (taskId: string) => {
+    if (!projectIsLocal || !window.divex) return;
+    const result = await window.divex.runProjectTask({
+      rootPath: payload.rootPath,
+      taskId,
+    });
+    showTransientNotice(result.output, result.success ? 3500 : 4500);
+  };
+
+  const runBuildTask = () => {
+    const buildTask = projectTasks.find((task) => task.group === "build");
+    if (buildTask) void runProjectTask(buildTask.id);
+  };
+
+  const runActiveFile = async () => {
+    if (!projectIsLocal || !window.divex || !selectedFile) return;
+    const result = await window.divex.runProjectFile({
+      rootPath: payload.rootPath,
+      entryPath: selectedFile.path,
+    });
+    showTransientNotice(result.output, result.success ? 3500 : 4500);
+  };
+
+  const changeView = (mode: ViewMode) => {
+    setViewMode(mode);
+    setShowCode(false);
+  };
+
+  const changeWorkflowDirection = (direction: WorkflowDirection) => {
+    setWorkflowDirection(direction);
+    setTwoDPositions({});
+    changeView("2d");
+  };
+
+  const toggleFreePositioning = () => {
+    setFreePositioning((value) => !value);
+    changeView("2d");
+  };
+
+  const handleSelectNode = (node: VisualNode) => {
+    setSelectedNode(node);
+    setShowCode(false);
+  };
+
   return (
     <main className="app-shell">
-      <header className="titlebar">
-        <div className="window-drag-region" />
-        <div className="titlebar-brand">
-          <BrandMark />
-          <strong>Divex</strong>
-          <span>Visualizer</span>
-          <small>EARLY ACCESS</small>
-          <div className="header-file-menu">
-            <button
-              type="button"
-              onClick={() => setFileMenuOpen((value) => !value)}
-            >
-              File
-            </button>
-            {fileMenuOpen && (
-              <div className="header-file-popover">
-                <button type="button" onClick={openProject}>
-                  <FolderOpen size={14} />
-                  Open Folder…
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="titlebar-center">
-          <span className="status-dot" />
-          Flutter analyzer
-        </div>
-        <button type="button" className="ai-button" disabled>
-          <Sparkles size={14} />
-          Ask Divex
-          <span>Later</span>
-        </button>
-      </header>
+      <AppHeader
+        fileMenuOpen={fileMenuOpen}
+        terminalMenuOpen={terminalMenuOpen}
+        terminalEnabled={projectIsLocal && Boolean(window.divex)}
+        tasks={projectTasks}
+        canRunActiveFile={
+          projectIsLocal &&
+          Boolean(
+            selectedFile &&
+              (selectedFile.extension === "dart" ||
+                selectedFile.extension === "py"),
+          )
+        }
+        onToggleFileMenu={() => {
+          setFileMenuOpen((value) => !value);
+          setTerminalMenuOpen(false);
+        }}
+        onToggleTerminalMenu={() => {
+          setTerminalMenuOpen((value) => !value);
+          setFileMenuOpen(false);
+        }}
+        onCloseMenus={() => {
+          setFileMenuOpen(false);
+          setTerminalMenuOpen(false);
+        }}
+        onOpenProject={openProject}
+        onNewTerminal={() => void openProjectTerminal()}
+        onRunTask={(taskId) => void runProjectTask(taskId)}
+        onRunBuildTask={runBuildTask}
+        onRunActiveFile={() => void runActiveFile()}
+      />
 
-      <div className="workspace">
-        <aside className="sidebar">
-          <div className="project-switcher">
-            <button
-              type="button"
-              className="project-button"
-              onClick={() => setProjectMenuOpen((value) => !value)}
-            >
-              <span className="project-icon">
-                <Box size={15} />
-              </span>
-              <span>
-                <strong>{project.name}</strong>
-                <small>Flutter project</small>
-              </span>
-              <ChevronDown size={14} />
-            </button>
-            {projectMenuOpen && (
-              <div className="project-menu">
-                <button type="button" onClick={openProject}>
-                  <FolderOpen size={15} />
-                  Open project folder…
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPayload(sampleProject);
-                    setTwoDZoom(1.4);
-                    setProjectMenuOpen(false);
-                  }}
-                >
-                  <ScanSearch size={15} />
-                  Load demo project
-                </button>
-              </div>
-            )}
-            <button
-              type="button"
-              className="open-folder-button"
-              onClick={openProject}
-            >
-              <FolderOpen size={14} />
-              Open folder
-            </button>
-          </div>
+      <div
+        className="workspace"
+        ref={workspaceRef}
+        style={
+          {
+            "--explorer-width": `${paneWidths.explorer}px`,
+            "--inspector-width": `${paneWidths.inspector}px`,
+          } as CSSProperties
+        }
+      >
+        <ProjectSidebar
+          project={project}
+          selectedId={selectedNode?.id ?? null}
+          canUseNativePaths={projectIsLocal && Boolean(window.divex)}
+          canShare={
+            projectIsLocal &&
+            window.divex?.platform === "darwin"
+          }
+          hasClipboard={Boolean(explorerClipboard)}
+          projectMenuOpen={projectMenuOpen}
+          onToggleProjectMenu={() =>
+            setProjectMenuOpen((value) => !value)
+          }
+          onOpenProject={openProject}
+          onLoadDemo={() => {
+            resetWorkspace(sampleProject);
+            setProjectMenuOpen(false);
+          }}
+          onSelectFile={selectFile}
+          onSelectFolder={selectFolder}
+          onRenameEntry={(entry, newName) =>
+            void renameExplorerEntry(entry, newName)
+          }
+          onDeleteEntry={(entry) => void deleteExplorerEntry(entry)}
+          onCopyEntryPath={(entry, relative) =>
+            void copyExplorerEntryPath(entry, relative)
+          }
+          onRevealEntry={(entry) => void revealExplorerEntry(entry)}
+          onRefresh={() => void refreshExplorer()}
+          onOpenExternal={(entry) => void openExplorerEntry(entry)}
+          onOpenTerminal={(entry) => void openExplorerTerminal(entry)}
+          onShareEntry={(entry) => void shareExplorerEntry(entry)}
+          onCutEntry={(entry) => stageExplorerEntry(entry, "cut")}
+          onCopyEntry={(entry) => stageExplorerEntry(entry, "copy")}
+          onPasteEntry={(entry) => void pasteExplorerEntry(entry)}
+        />
 
-          <div className="sidebar-label">
-            <span>PROJECT FILES</span>
-            <small>{project.files.length}</small>
-          </div>
-          <FileExplorer
-            root={project.root}
-            selectedId={selectedNode?.id ?? null}
-            onSelectFile={selectFile}
-            onSelectFolder={selectFolder}
-          />
+        <WorkspaceResizer
+          className="explorer-resizer"
+          label="Resize project explorer"
+          value={paneWidths.explorer}
+          min={MIN_EXPLORER_WIDTH}
+          max={explorerMaxWidth}
+          panelSide="before"
+          onChange={(explorer) =>
+            setPaneWidths((current) => ({ ...current, explorer }))
+          }
+          onReset={() => {
+            const defaults = defaultPaneWidths(workspaceWidth);
+            setPaneWidths((current) => ({
+              ...current,
+              explorer: Math.min(defaults.explorer, explorerMaxWidth),
+            }));
+          }}
+        />
 
-          <div className="sidebar-summary">
-            <div>
-              <span>{project.files.length}</span>
-              <small>files</small>
-            </div>
-            <div>
-              <span>{project.relationshipCount}</span>
-              <small>links</small>
-            </div>
-            <div>
-              <span>
-                {project.files.reduce(
-                  (total, file) => total + file.symbols.length,
-                  0,
-                )}
-              </span>
-              <small>symbols</small>
-            </div>
-          </div>
-        </aside>
+        <VisualizerWorkspace
+          project={project}
+          selectedFile={selectedFile}
+          selectedId={selectedNode?.id ?? null}
+          viewMode={viewMode}
+          experienceMode={experienceMode}
+          showCode={showCode}
+          cameraResetKey={cameraResetKey}
+          twoDZoom={twoDZoom}
+          workflowDirection={workflowDirection}
+          freePositioning={freePositioning}
+          twoDPositions={twoDPositions}
+          expandedFolders={expandedFolders}
+          expandedFiles={expandedFiles}
+          threeDExpansion={threeDExpansion}
+          onChangeView={changeView}
+          onChangeExperience={setExperienceMode}
+          onChangeWorkflowDirection={changeWorkflowDirection}
+          onToggleFreePositioning={toggleFreePositioning}
+          onResetTwoDPositions={() => setTwoDPositions({})}
+          onFullscreenError={(message) => {
+            showTransientNotice(message);
+          }}
+          onShowVisualizer={() => setShowCode(false)}
+          onResetCamera={() => setCameraResetKey((value) => value + 1)}
+          onSelectNode={handleSelectNode}
+          onToggleFolderAtLayer={toggleFolderAtLayer}
+          onToggleFileAtLayer={toggleFileAtLayer}
+          onToggleFolderFreely={toggleFolderFreely}
+          onToggleFileFreely={toggleFileFreely}
+          onTwoDZoomChange={setTwoDZoom}
+          onTwoDPositionsChange={setTwoDPositions}
+          onPersistFile={persistFileContent}
+        />
 
-        <section className="visualizer-area">
-          <div className="canvas-toolbar">
-            <div className="segmented-control">
-              <button
-                type="button"
-                className={viewMode === "2d" ? "active" : ""}
-                onClick={() => {
-                  setViewMode("2d");
-                  setShowCode(false);
-                }}
-              >
-                <Workflow size={14} />
-                2D flow
-              </button>
-              <button
-                type="button"
-                className={viewMode === "3d" ? "active" : ""}
-                onClick={() => {
-                  setViewMode("3d");
-                  setShowCode(false);
-                }}
-              >
-                <Move3d size={14} />
-                3D map
-              </button>
-            </div>
-
-            <div className="canvas-context">
-              <span>
-                {showCode
-                  ? "Flutter code editor"
-                  : viewMode === "3d"
-                    ? "Interactive space"
-                    : "Workflow map"}
-              </span>
-              <i />
-              <strong>{project.relationshipCount} relationships</strong>
-            </div>
-
-            <div className="toolbar-actions">
-              <div className="mode-switch">
-                <button
-                  type="button"
-                  className={experienceMode === "beginner" ? "active" : ""}
-                  onClick={() => setExperienceMode("beginner")}
-                >
-                  Guided
-                </button>
-                <button
-                  type="button"
-                  className={experienceMode === "advanced" ? "active" : ""}
-                  onClick={() => setExperienceMode("advanced")}
-                >
-                  <BrainCircuit size={13} />
-                  Advanced
-                </button>
-              </div>
-              {viewMode === "3d" && (
-                <>
-                  <button
-                    type="button"
-                    className="reset-button"
-                    onClick={() => setCameraResetKey((value) => value + 1)}
-                    title="Reset camera"
-                  >
-                    <RotateCcw size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    className="reset-button unload-three-button"
-                    aria-label="Unload 3D and return to 2D"
-                    onClick={() => {
-                      setViewMode("2d");
-                      setShowCode(false);
-                    }}
-                    title="Unload 3D for better performance"
-                  >
-                    <Power size={15} />
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="visualizer-canvas">
-            {showCode && selectedFile ? (
-              <CodeEditor
-                file={selectedFile}
-                projectName={project.name}
-                rootPath={project.rootPath}
-                onClose={() => setShowCode(false)}
-                onPersist={persistFileContent}
-              />
-            ) : viewMode === "3d" ? (
-              <Suspense
-                fallback={
-                  <div className="three-loading">
-                    <div className="loader" />
-                    <strong>Loading 3D workspace…</strong>
-                    <span>Only loaded when you request it</span>
-                  </div>
-                }
-              >
-                <ThreeVisualizer
-                  project={project}
-                  expandedFolders={threeDExpansion.folders}
-                  expandedFiles={threeDExpansion.files}
-                  selectedId={selectedNode?.id ?? null}
-                  experienceMode={experienceMode}
-                  cameraResetKey={cameraResetKey}
-                  onSelectNode={(node) => {
-                    setSelectedNode(node);
-                    setShowCode(false);
-                  }}
-                  onToggleFolder={toggleFolderAtLayer}
-                  onToggleFile={toggleFileAtLayer}
-                />
-              </Suspense>
-            ) : (
-              <TwoDVisualizer
-                project={project}
-                expandedFolders={expandedFolders}
-                expandedFiles={expandedFiles}
-                selectedId={selectedNode?.id ?? null}
-                zoom={twoDZoom}
-                onZoomChange={setTwoDZoom}
-                onSelectNode={(node) => {
-                  setSelectedNode(node);
-                  setShowCode(false);
-                }}
-                onToggleFolder={toggleFolderFreely}
-                onToggleFile={toggleFileFreely}
-              />
-            )}
-            {!showCode && viewMode === "3d" && (
-              <div className="canvas-help">
-                <span><i className="mouse-icon" /> 2-finger sideways: rotate</span>
-                <span>2-finger vertical: move</span>
-                <span>Pinch: zoom</span>
-              </div>
-            )}
-            {!showCode && (
-              <div className="graph-legend">
-                <span><i className="line-solid" /> Contains</span>
-                <span><i className="line-dashed" /> Imports</span>
-              </div>
-            )}
-          </div>
-        </section>
+        <WorkspaceResizer
+          className="inspector-resizer"
+          label="Resize file properties"
+          value={paneWidths.inspector}
+          min={MIN_INSPECTOR_WIDTH}
+          max={inspectorMaxWidth}
+          panelSide="after"
+          onChange={(inspector) =>
+            setPaneWidths((current) => ({ ...current, inspector }))
+          }
+          onReset={() => {
+            const defaults = defaultPaneWidths(workspaceWidth);
+            setPaneWidths((current) => ({
+              ...current,
+              inspector: Math.min(defaults.inspector, inspectorMaxWidth),
+            }));
+          }}
+        />
 
         <InspectorPanel
           project={project}
           selectedNode={selectedNode}
           selectedFile={selectedFile}
-          mode={experienceMode}
           showCode={showCode}
           onToggleCode={() => setShowCode((value) => !value)}
           onClose={() => {
