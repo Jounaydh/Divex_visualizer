@@ -2,6 +2,7 @@ import {
   Braces,
   FileCode2,
   Folder,
+  Globe2,
   Layers3,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -30,6 +31,7 @@ function NodeIcon({ node }: { node: VisualNode }) {
   if (node.kind === "project") return <Layers3 size={15} />;
   if (node.kind === "folder") return <Folder size={15} />;
   if (node.kind === "file") return <FileCode2 size={15} />;
+  if (node.kind === "external") return <Globe2 size={15} />;
   return <Braces size={15} />;
 }
 

@@ -8,8 +8,7 @@ import {
   ChevronDown,
   Maximize2,
   Minimize2,
-  Move3d,
-  Power,
+  Route,
   RotateCcw,
   SlidersHorizontal,
   Workflow,
@@ -42,7 +41,6 @@ interface VisualizerToolbarProps {
   onWorkflowDirectionChange: (direction: WorkflowDirection) => void;
   onToggleFreePositioning: () => void;
   onResetCustomPositions: () => void;
-  onResetCamera: () => void;
   onToggleFullscreen: () => void;
 }
 
@@ -60,7 +58,6 @@ export function VisualizerToolbar({
   onWorkflowDirectionChange,
   onToggleFreePositioning,
   onResetCustomPositions,
-  onResetCamera,
   onToggleFullscreen,
 }: VisualizerToolbarProps) {
   const viewMenuRef = useRef<HTMLDetailsElement>(null);
@@ -112,11 +109,11 @@ export function VisualizerToolbar({
           </button>
           <button
             type="button"
-            className={viewMode === "3d" ? "active" : ""}
-            onClick={() => onViewModeChange("3d")}
+            className={viewMode === "logic" ? "active" : ""}
+            onClick={() => onViewModeChange("logic")}
           >
-            <Move3d size={14} />
-            3D map
+            <Route size={14} />
+            Logic map
           </button>
         </div>
 
@@ -131,8 +128,8 @@ export function VisualizerToolbar({
           </summary>
           <div className="view-menu" role="menu">
             <div className="view-menu-heading">
-              <strong>2D workflow layout</strong>
-              <span>Choose the direction your project flows.</span>
+              <strong>Map layout</strong>
+              <span>Choose the direction the active map flows.</span>
             </div>
             <div className="direction-options">
               {WORKFLOW_DIRECTIONS.map(({ value, label, Icon }) => (
@@ -186,8 +183,8 @@ export function VisualizerToolbar({
         <span>
           {showCode
             ? "Flutter code editor"
-            : viewMode === "3d"
-              ? "Interactive space"
+            : viewMode === "logic"
+              ? "Logical code workflow"
               : "Workflow map"}
         </span>
         <i />
@@ -212,27 +209,6 @@ export function VisualizerToolbar({
             Advanced
           </button>
         </div>
-        {viewMode === "3d" && (
-          <>
-            <button
-              type="button"
-              className="reset-button"
-              onClick={onResetCamera}
-              title="Reset camera"
-            >
-              <RotateCcw size={15} />
-            </button>
-            <button
-              type="button"
-              className="reset-button unload-three-button"
-              aria-label="Unload 3D and return to 2D"
-              onClick={() => onViewModeChange("2d")}
-              title="Unload 3D for better performance"
-            >
-              <Power size={15} />
-            </button>
-          </>
-        )}
         <button
           type="button"
           className="reset-button fullscreen-button"

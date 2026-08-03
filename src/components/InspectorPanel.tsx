@@ -24,6 +24,7 @@ interface InspectorPanelProps {
   onToggleCode: () => void;
   onClose: () => void;
   onSelectPath: (path: string) => void;
+  onSelectNode: (node: VisualNode) => void;
 }
 
 function relationshipExplanation(source: AnalyzedFile, target: AnalyzedFile) {
@@ -38,6 +39,7 @@ export function InspectorPanel({
   onToggleCode,
   onClose,
   onSelectPath,
+  onSelectNode,
 }: InspectorPanelProps) {
   const [symbolsOpen, setSymbolsOpen] = useState(false);
 
@@ -59,7 +61,10 @@ export function InspectorPanel({
         </p>
         <div className="hint-card">
           <Lightbulb size={15} />
-          <span>Drag to rotate. Scroll to zoom. Double-click to expand.</span>
+          <span>
+            Open Logic map to follow calls, object creation, inheritance, and
+            imports with labeled arrows.
+          </span>
         </div>
       </aside>
     );
@@ -75,6 +80,21 @@ export function InspectorPanel({
         file.resolvedImports.includes(selectedFile.path),
       )
     : [];
+  const selectedSymbol = selectedFile?.symbols.find(
+    (symbol) => symbol.id === selectedNode.id,
+  );
+  const logicalConnections = project.relationships.filter(
+    (relationship) =>
+      relationship.sourceId === selectedNode.id ||
+      relationship.targetId === selectedNode.id,
+  );
+  const definedSymbols = selectedSymbol
+    ? selectedFile?.symbols.filter(
+        (symbol) => symbol.parentSymbolId === selectedSymbol.id,
+      ) ?? []
+    : [];
+  const logicalConnectionCount =
+    logicalConnections.length + definedSymbols.length;
 
   return (
     <aside className="inspector">
@@ -87,7 +107,7 @@ export function InspectorPanel({
               <Braces size={16} />
             )}
           </div>
-          <span>File properties</span>
+          <span>{selectedSymbol ? "Code logic" : "File properties"}</span>
         </div>
         <button type="button" className="icon-button" onClick={onClose}>
           <X size={16} />
@@ -112,8 +132,10 @@ export function InspectorPanel({
               <span>symbols</span>
             </div>
             <div>
-              <strong>{dependencies.length}</strong>
-              <span>links out</span>
+              <strong>
+                {selectedSymbol ? logicalConnectionCount : dependencies.length}
+              </strong>
+              <span>{selectedSymbol ? "logic links" : "links out"}</span>
             </div>
           </div>
 
@@ -123,7 +145,109 @@ export function InspectorPanel({
             <ExternalLink size={13} />
           </button>
 
-          <section className="inspector-section">
+          {selectedSymbol && (
+            <section className="inspector-section">
+              <div className="section-label">
+                <Network size={14} />
+                <span>Logical connections</span>
+                <small>{logicalConnectionCount}</small>
+              </div>
+              {logicalConnectionCount === 0 ? (
+                <p className="quiet">
+                  No direct calls or type relationships were detected for this
+                  symbol.
+                </p>
+              ) : (
+                <>
+                  {definedSymbols.map((symbol) => (
+                    <button
+                      type="button"
+                      className="relationship-card logic-relationship-card"
+                      key={`defines:${symbol.id}`}
+                      onClick={() =>
+                        onSelectNode({
+                          id: symbol.id,
+                          label: symbol.name,
+                          subtitle: `${symbol.kind} · line ${symbol.line}`,
+                          kind: symbol.kind,
+                          path: selectedFile.path,
+                          parentId: selectedSymbol.id,
+                          position: [0, 0, 0],
+                        })
+                      }
+                    >
+                      <span className="relationship-route">
+                        {selectedSymbol.name}
+                        <ArrowRight size={12} />
+                        {symbol.name}
+                      </span>
+                      <em>defines</em>
+                      <p>
+                        {selectedSymbol.name} defines the {symbol.kind}{" "}
+                        {symbol.name}.
+                      </p>
+                    </button>
+                  ))}
+                  {logicalConnections.map((connection) => {
+                    const incoming =
+                      connection.targetId === selectedSymbol.id;
+                    const connectedId = incoming
+                      ? connection.sourceId
+                      : connection.targetId;
+                    const connectedFile = project.files.find(
+                      (file) =>
+                        file.path ===
+                        (incoming
+                          ? connection.sourcePath
+                          : connection.targetPath),
+                    );
+                    const connectedSymbol = connectedFile?.symbols.find(
+                      (symbol) => symbol.id === connectedId,
+                    );
+                    const sourceName = incoming
+                      ? connectedSymbol?.name ?? connection.sourcePath
+                      : selectedSymbol.name;
+                    const targetName = incoming
+                      ? selectedSymbol.name
+                      : connection.targetName;
+                    return (
+                      <button
+                        type="button"
+                        className="relationship-card logic-relationship-card"
+                        key={connection.id}
+                        disabled={!connectedSymbol || !connectedFile}
+                        onClick={() => {
+                          if (!connectedSymbol || !connectedFile) return;
+                          onSelectNode({
+                            id: connectedSymbol.id,
+                            label: connectedSymbol.name,
+                            subtitle: `${connectedSymbol.kind} · line ${connectedSymbol.line}`,
+                            kind: connectedSymbol.kind,
+                            path: connectedFile.path,
+                            parentId: connectedSymbol.parentSymbolId,
+                            position: [0, 0, 0],
+                          });
+                        }}
+                      >
+                        <span className="relationship-route">
+                          {sourceName}
+                          <ArrowRight size={12} />
+                          {targetName}
+                        </span>
+                        <em>{connection.kind}</em>
+                        <p>{connection.explanation}</p>
+                        {connection.confidence === "inferred" && (
+                          <small>Inferred by static analysis</small>
+                        )}
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            </section>
+          )}
+
+          {!selectedSymbol && <section className="inspector-section">
             <div className="section-label">
               <Network size={14} />
               <span>Dependencies</span>
@@ -150,9 +274,9 @@ export function InspectorPanel({
                 </button>
               ))
             )}
-          </section>
+          </section>}
 
-          <section className="inspector-section">
+          {!selectedSymbol && <section className="inspector-section">
             <div className="section-label">
               <Network size={14} />
               <span>Referenced by</span>
@@ -173,7 +297,7 @@ export function InspectorPanel({
                 </button>
               ))
             )}
-          </section>
+          </section>}
 
           <section className="inspector-section symbols-section">
             <button

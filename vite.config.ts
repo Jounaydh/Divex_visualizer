@@ -6,15 +6,6 @@ function vendorChunk(id: string) {
   if (!moduleId.includes("/node_modules/")) return undefined;
   if (moduleId.includes("/ace-builds/")) return "editor-engine";
   if (
-    moduleId.includes("/@react-three/") ||
-    moduleId.includes("/three/") ||
-    moduleId.includes("/three-stdlib/") ||
-    moduleId.includes("/camera-controls/") ||
-    moduleId.includes("/maath/")
-  ) {
-    return "visualizer-3d-engine";
-  }
-  if (
     moduleId.includes("/react/") ||
     moduleId.includes("/react-dom/") ||
     moduleId.includes("/scheduler/")
@@ -43,7 +34,7 @@ export default defineConfig({
         assetFileNames: "assets/[ext]/[name]-[hash][extname]",
       },
     },
-    // The two large engine chunks are intentional and loaded on demand.
+    // The editor remains optional and is loaded only when source view opens.
     chunkSizeWarningLimit: 950,
   },
 });

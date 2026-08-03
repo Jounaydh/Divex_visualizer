@@ -9,19 +9,13 @@ import type {
   WorkflowPosition,
 } from "../types";
 import { TwoDVisualizer } from "../components/TwoDVisualizer";
-import type { ThreeDExpansion } from "./expansion";
+import { LogicalWorkflowVisualizer } from "../components/LogicalWorkflowVisualizer";
 import { useElementFullscreen } from "./useElementFullscreen";
 import { VisualizerToolbar } from "./VisualizerToolbar";
 
 const CodeEditor = lazy(() =>
   import("../components/CodeEditor").then((module) => ({
     default: module.CodeEditor,
-  })),
-);
-
-const ThreeVisualizer = lazy(() =>
-  import("../components/ThreeVisualizer").then((module) => ({
-    default: module.ThreeVisualizer,
   })),
 );
 
@@ -32,14 +26,14 @@ interface VisualizerWorkspaceProps {
   viewMode: ViewMode;
   experienceMode: ExperienceMode;
   showCode: boolean;
-  cameraResetKey: number;
   twoDZoom: number;
+  logicZoom: number;
   workflowDirection: WorkflowDirection;
   freePositioning: boolean;
   twoDPositions: Readonly<Record<string, WorkflowPosition>>;
+  logicPositions: Readonly<Record<string, WorkflowPosition>>;
   expandedFolders: Set<string>;
   expandedFiles: Set<string>;
-  threeDExpansion: ThreeDExpansion;
   onChangeView: (mode: ViewMode) => void;
   onChangeExperience: (mode: ExperienceMode) => void;
   onChangeWorkflowDirection: (direction: WorkflowDirection) => void;
@@ -47,14 +41,15 @@ interface VisualizerWorkspaceProps {
   onResetTwoDPositions: () => void;
   onFullscreenError: (message: string) => void;
   onShowVisualizer: () => void;
-  onResetCamera: () => void;
   onSelectNode: (node: VisualNode) => void;
-  onToggleFolderAtLayer: (id: string) => void;
-  onToggleFileAtLayer: (id: string) => void;
   onToggleFolderFreely: (id: string) => void;
   onToggleFileFreely: (id: string) => void;
   onTwoDZoomChange: (zoom: number) => void;
+  onLogicZoomChange: (zoom: number) => void;
   onTwoDPositionsChange: (
+    positions: Record<string, WorkflowPosition>,
+  ) => void;
+  onLogicPositionsChange: (
     positions: Record<string, WorkflowPosition>,
   ) => void;
   onPersistFile: (path: string, content: string) => void;
@@ -68,7 +63,7 @@ function LoadingWorkspace({
   description: string;
 }) {
   return (
-    <div className="three-loading">
+    <div className="workspace-loading">
       <div className="loader" />
       <strong>{title}</strong>
       <span>{description}</span>
@@ -83,14 +78,14 @@ export function VisualizerWorkspace({
   viewMode,
   experienceMode,
   showCode,
-  cameraResetKey,
   twoDZoom,
+  logicZoom,
   workflowDirection,
   freePositioning,
   twoDPositions,
+  logicPositions,
   expandedFolders,
   expandedFiles,
-  threeDExpansion,
   onChangeView,
   onChangeExperience,
   onChangeWorkflowDirection,
@@ -98,14 +93,13 @@ export function VisualizerWorkspace({
   onResetTwoDPositions,
   onFullscreenError,
   onShowVisualizer,
-  onResetCamera,
   onSelectNode,
-  onToggleFolderAtLayer,
-  onToggleFileAtLayer,
   onToggleFolderFreely,
   onToggleFileFreely,
   onTwoDZoomChange,
+  onLogicZoomChange,
   onTwoDPositionsChange,
+  onLogicPositionsChange,
   onPersistFile,
 }: VisualizerWorkspaceProps) {
   const selectNode = (node: VisualNode) => onSelectNode(node);
@@ -133,14 +127,17 @@ export function VisualizerWorkspace({
         experienceMode={experienceMode}
         workflowDirection={workflowDirection}
         freePositioning={freePositioning}
-        hasCustomPositions={Object.keys(twoDPositions).length > 0}
+        hasCustomPositions={
+          Object.keys(
+            viewMode === "logic" ? logicPositions : twoDPositions,
+          ).length > 0
+        }
         isFullscreen={isFullscreen}
         onViewModeChange={onChangeView}
         onExperienceModeChange={onChangeExperience}
         onWorkflowDirectionChange={onChangeWorkflowDirection}
         onToggleFreePositioning={onToggleFreePositioning}
         onResetCustomPositions={onResetTwoDPositions}
-        onResetCamera={onResetCamera}
         onToggleFullscreen={() => void handleToggleFullscreen()}
       />
 
@@ -161,17 +158,17 @@ export function VisualizerWorkspace({
               onClose={onShowVisualizer}
               onPersist={onPersistFile}
             />
-          ) : viewMode === "3d" ? (
-            <ThreeVisualizer
+          ) : viewMode === "logic" ? (
+            <LogicalWorkflowVisualizer
               project={project}
-              expandedFolders={threeDExpansion.folders}
-              expandedFiles={threeDExpansion.files}
               selectedId={selectedId}
-              experienceMode={experienceMode}
-              cameraResetKey={cameraResetKey}
+              zoom={logicZoom}
+              direction={workflowDirection}
+              freePositioning={freePositioning}
+              customPositions={logicPositions}
+              onZoomChange={onLogicZoomChange}
+              onCustomPositionsChange={onLogicPositionsChange}
               onSelectNode={selectNode}
-              onToggleFolder={onToggleFolderAtLayer}
-              onToggleFile={onToggleFileAtLayer}
             />
           ) : (
             <TwoDVisualizer
@@ -192,16 +189,13 @@ export function VisualizerWorkspace({
           )}
         </Suspense>
 
-        {!showCode && viewMode === "3d" && (
+        {!showCode && viewMode === "logic" && (
           <div className="canvas-help">
-            <span>
-              <i className="mouse-icon" /> 2-finger sideways: rotate
-            </span>
-            <span>2-finger vertical: move</span>
-            <span>Pinch: zoom</span>
+            <span>Arrows show the direction code flows</span>
+            <span>Select a card to isolate its direct links</span>
           </div>
         )}
-        {!showCode && (
+        {!showCode && viewMode === "2d" && (
           <div className="graph-legend">
             <span>
               <i className="line-solid" /> Contains

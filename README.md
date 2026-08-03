@@ -1,22 +1,23 @@
 # Divex Visualizer
 
 Divex Visualizer is a desktop-first code exploration tool that turns a project
-into an interactive 3D dependency space and a conventional 2D workflow. Its
-first analyzer targets Dart and Flutter, while its internal project and graph
-models are intentionally language-neutral.
+into a conventional project map and a logical code workflow. Its first analyzer
+targets Dart and Flutter, while its internal project and graph models are
+intentionally language-neutral.
 
 ## Current prototype
 
 - VS Code-style project explorer
 - Native desktop folder picker
-- Rotatable, zoomable, and pannable WebGL visualization
-- Camera-facing 2D folder, file, and symbol controls inside the 3D space
 - Expandable and collapsible folder groups
 - File-to-file import relationships
 - File drill-down into Flutter widgets, classes, functions, and methods
+- Logical workflow for entry points, calls, object creation, inheritance,
+  interfaces, type usage, and internal or external imports
+- Relationship filters, labeled directional links, selection focus, panning,
+  zooming, and free card positioning
 - Direct source-code inspection
 - Guided and advanced inspection modes
-- 2D workflow alternative
 - Built-in Flutter demonstration project
 
 ## Run locally
@@ -38,9 +39,10 @@ npm run build
 ## Documentation
 
 - [Development and architecture guide](docs/DEVELOPMENT.md)
+- [Full IDE roadmap](docs/IDE_ROADMAP.md)
 - `src/app/` contains the application shell and view orchestration.
 - `src/analysis/languages/` is the extension point for language analyzers.
-- `src/components/three/` contains focused parts of the 3D renderer.
+- `src/visualization/` contains the project and logical graph builders.
 
 ## Analyzer architecture
 
@@ -51,7 +53,7 @@ project graph:
 Language adapter
   -> files, symbols, dependencies, and relationships
   -> shared Divex graph
-  -> 2D and 3D renderers
+  -> project map and logical workflow renderers
   -> guided or advanced explanation layer
 ```
 

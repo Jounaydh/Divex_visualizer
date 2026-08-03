@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import {
   extractDartImports,
+  extractDartRelationships,
   extractDartSymbols,
   resolveDartImport,
 } from "./languages/dart";
@@ -71,10 +72,14 @@ export function analyzeProject(payload: ProjectPayload): AnalyzedProject {
     const imports = file.path.endsWith(".dart")
       ? extractDartImports(file.content)
       : [];
-    const resolvedImports = imports
-      .map((value) =>
-        resolveDartImport(file.path, value, payload.name, knownPaths),
-      )
+    const importLinks = imports.map((value) => ({
+      value,
+      targetPath:
+        resolveDartImport(file.path, value, payload.name, knownPaths) ??
+        undefined,
+    }));
+    const resolvedImports = importLinks
+      .map((link) => link.targetPath)
       .filter((value): value is string => Boolean(value));
 
     return {
@@ -84,20 +89,25 @@ export function analyzeProject(payload: ProjectPayload): AnalyzedProject {
       extension,
       kind: extensionKind[extension] ?? "unknown",
       imports,
+      importLinks,
       resolvedImports,
       symbols: extractDartSymbols(file.path, file.content),
       lineCount: file.content.split("\n").length,
     };
   });
 
+  const relationships = extractDartRelationships(files);
+  const importRelationshipCount = files.reduce(
+    (total, file) => total + file.imports.length,
+    0,
+  );
+
   return {
     name: payload.name,
     rootPath: payload.rootPath,
     root: buildFolderTree(files, payload.name),
     files,
-    relationshipCount: files.reduce(
-      (total, file) => total + file.resolvedImports.length,
-      0,
-    ),
+    relationships,
+    relationshipCount: importRelationshipCount + relationships.length,
   };
 }

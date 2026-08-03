@@ -1,5 +1,5 @@
 export type ExperienceMode = "beginner" | "advanced";
-export type ViewMode = "3d" | "2d";
+export type ViewMode = "2d" | "logic";
 export type WorkflowDirection =
   | "top-down"
   | "bottom-up"
@@ -22,9 +22,20 @@ export type FileKind =
 export type SymbolKind =
   | "class"
   | "widget"
+  | "constructor"
   | "function"
   | "method"
   | "variable";
+
+export type LogicalRelationKind =
+  | "starts"
+  | "defines"
+  | "imports"
+  | "calls"
+  | "creates"
+  | "extends"
+  | "implements"
+  | "uses";
 
 export interface ProjectFile {
   path: string;
@@ -43,7 +54,22 @@ export interface CodeSymbol {
   kind: SymbolKind;
   signature: string;
   line: number;
+  endLine: number;
+  parentSymbolId?: string;
   description: string;
+}
+
+export interface CodeRelationship {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  sourcePath: string;
+  targetPath?: string;
+  targetName: string;
+  kind: Exclude<LogicalRelationKind, "starts" | "defines" | "imports">;
+  line: number;
+  confidence: "exact" | "inferred";
+  explanation: string;
 }
 
 export interface AnalyzedFile extends ProjectFile {
@@ -52,6 +78,10 @@ export interface AnalyzedFile extends ProjectFile {
   extension: string;
   kind: FileKind;
   imports: string[];
+  importLinks: Array<{
+    value: string;
+    targetPath?: string;
+  }>;
   resolvedImports: string[];
   symbols: CodeSymbol[];
   lineCount: number;
@@ -70,6 +100,7 @@ export interface AnalyzedProject {
   rootPath: string;
   root: FolderNode;
   files: AnalyzedFile[];
+  relationships: CodeRelationship[];
   relationshipCount: number;
 }
 
@@ -77,6 +108,7 @@ export type VisualNodeKind =
   | "project"
   | "folder"
   | "file"
+  | "external"
   | SymbolKind;
 
 export interface VisualNode {
@@ -94,7 +126,10 @@ export interface VisualEdge {
   id: string;
   source: string;
   target: string;
-  kind: "contains" | "imports";
+  kind: "contains" | LogicalRelationKind;
+  label?: string;
+  explanation?: string;
+  confidence?: CodeRelationship["confidence"];
 }
 
 export interface ProjectToolResult {

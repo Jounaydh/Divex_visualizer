@@ -8,10 +8,7 @@ import {
 import { analyzeProject } from "./analysis/analyzeProject";
 import { AppHeader } from "./app/AppHeader";
 import {
-  buildThreeDExpansion,
-  fileLayer,
   folderIdsForPath,
-  folderLayer,
 } from "./app/expansion";
 import { ProjectSidebar } from "./app/ProjectSidebar";
 import { VisualizerWorkspace } from "./app/VisualizerWorkspace";
@@ -60,7 +57,11 @@ export default function App() {
     useState<WorkflowDirection>("top-down");
   const [freePositioning, setFreePositioning] = useState(false);
   const [twoDZoom, setTwoDZoom] = useState(DEFAULT_TWO_D_ZOOM);
+  const [logicZoom, setLogicZoom] = useState(0.8);
   const [twoDPositions, setTwoDPositions] = useState<
+    Record<string, WorkflowPosition>
+  >({});
+  const [logicPositions, setLogicPositions] = useState<
     Record<string, WorkflowPosition>
   >({});
   const [expandedFolders, setExpandedFolders] = useState(
@@ -71,7 +72,6 @@ export default function App() {
   );
   const [selectedNode, setSelectedNode] = useState<VisualNode | null>(null);
   const [showCode, setShowCode] = useState(false);
-  const [cameraResetKey, setCameraResetKey] = useState(0);
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -173,12 +173,6 @@ export default function App() {
     );
   }, [project.files, selectedNode]);
 
-  const threeDExpansion = useMemo(
-    () =>
-      buildThreeDExpansion(expandedFolders, expandedFiles, selectedNode),
-    [expandedFiles, expandedFolders, selectedNode],
-  );
-
   const showTransientNotice = (message: string, duration = 3500) => {
     setNotice(message);
     window.setTimeout(() => setNotice(null), duration);
@@ -198,63 +192,12 @@ export default function App() {
     );
     setExpandedFiles(new Set());
     setTwoDZoom(DEFAULT_TWO_D_ZOOM);
+    setLogicZoom(0.8);
     setTwoDPositions({});
+    setLogicPositions({});
     setSelectedNode(null);
     setShowCode(false);
-    setCameraResetKey((value) => value + 1);
     setProjectIsLocal(isLocalProject);
-  };
-
-  const toggleFolderAtLayer = (id: string) => {
-    const isOpen = threeDExpansion.folders.has(id);
-    const layer = folderLayer(id);
-    setExpandedFolders((current) => {
-      const next = new Set(current);
-      if (isOpen) {
-        next.delete(id);
-        return next;
-      }
-      [...next].forEach((openId) => {
-        if (folderLayer(openId) === layer) next.delete(openId);
-      });
-      next.add(id);
-      return next;
-    });
-    if (!isOpen) {
-      setExpandedFiles((current) => {
-        const next = new Set(current);
-        [...next].forEach((openId) => {
-          if (fileLayer(openId) === layer) next.delete(openId);
-        });
-        return next;
-      });
-    }
-  };
-
-  const toggleFileAtLayer = (id: string) => {
-    const isOpen = threeDExpansion.files.has(id);
-    const layer = fileLayer(id);
-    setExpandedFiles((current) => {
-      const next = new Set(current);
-      if (isOpen) {
-        next.delete(id);
-        return next;
-      }
-      [...next].forEach((openId) => {
-        if (fileLayer(openId) === layer) next.delete(openId);
-      });
-      next.add(id);
-      return next;
-    });
-    if (!isOpen) {
-      setExpandedFolders((current) => {
-        const next = new Set(current);
-        [...next].forEach((openId) => {
-          if (folderLayer(openId) === layer) next.delete(openId);
-        });
-        return next;
-      });
-    }
   };
 
   const toggleFolderFreely = (id: string) => {
@@ -277,31 +220,11 @@ export default function App() {
 
   const selectFile = (file: AnalyzedFile) => {
     const ancestorIds = folderIdsForPath(file.path);
-    const ancestorLayers = new Set(ancestorIds.map(folderLayer));
     setExpandedFolders((current) => {
       const next = new Set(current);
-      ancestorIds.forEach((id) => {
-        if (viewMode === "2d") {
-          next.add(id);
-          return;
-        }
-        const layer = folderLayer(id);
-        [...next].forEach((openId) => {
-          if (folderLayer(openId) === layer) next.delete(openId);
-        });
-        next.add(id);
-      });
+      ancestorIds.forEach((id) => next.add(id));
       return next;
     });
-    if (viewMode === "3d") {
-      setExpandedFiles((current) => {
-        const next = new Set(current);
-        [...next].forEach((openId) => {
-          if (ancestorLayers.has(fileLayer(openId))) next.delete(openId);
-        });
-        return next;
-      });
-    }
     setSelectedNode({
       id: file.id,
       label: file.name,
@@ -693,12 +616,11 @@ export default function App() {
   const changeWorkflowDirection = (direction: WorkflowDirection) => {
     setWorkflowDirection(direction);
     setTwoDPositions({});
-    changeView("2d");
+    setLogicPositions({});
   };
 
   const toggleFreePositioning = () => {
     setFreePositioning((value) => !value);
-    changeView("2d");
   };
 
   const handleSelectNode = (node: VisualNode) => {
@@ -813,31 +735,33 @@ export default function App() {
           viewMode={viewMode}
           experienceMode={experienceMode}
           showCode={showCode}
-          cameraResetKey={cameraResetKey}
           twoDZoom={twoDZoom}
+          logicZoom={logicZoom}
           workflowDirection={workflowDirection}
           freePositioning={freePositioning}
           twoDPositions={twoDPositions}
+          logicPositions={logicPositions}
           expandedFolders={expandedFolders}
           expandedFiles={expandedFiles}
-          threeDExpansion={threeDExpansion}
           onChangeView={changeView}
           onChangeExperience={setExperienceMode}
           onChangeWorkflowDirection={changeWorkflowDirection}
           onToggleFreePositioning={toggleFreePositioning}
-          onResetTwoDPositions={() => setTwoDPositions({})}
+          onResetTwoDPositions={() => {
+            if (viewMode === "logic") setLogicPositions({});
+            else setTwoDPositions({});
+          }}
           onFullscreenError={(message) => {
             showTransientNotice(message);
           }}
           onShowVisualizer={() => setShowCode(false)}
-          onResetCamera={() => setCameraResetKey((value) => value + 1)}
           onSelectNode={handleSelectNode}
-          onToggleFolderAtLayer={toggleFolderAtLayer}
-          onToggleFileAtLayer={toggleFileAtLayer}
           onToggleFolderFreely={toggleFolderFreely}
           onToggleFileFreely={toggleFileFreely}
           onTwoDZoomChange={setTwoDZoom}
+          onLogicZoomChange={setLogicZoom}
           onTwoDPositionsChange={setTwoDPositions}
+          onLogicPositionsChange={setLogicPositions}
           onPersistFile={persistFileContent}
         />
 
@@ -871,6 +795,7 @@ export default function App() {
             setShowCode(false);
           }}
           onSelectPath={selectPath}
+          onSelectNode={handleSelectNode}
         />
       </div>
 

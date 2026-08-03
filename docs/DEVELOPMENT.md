@@ -47,21 +47,26 @@ strict TypeScript checks and creates a production renderer build.
 │   │   ├── AppHeader.tsx        Desktop header and File menu
 │   │   ├── ProjectSidebar.tsx   Project switcher, explorer, project totals
 │   │   ├── VisualizerWorkspace.tsx
-│   │   │                         View toolbar and lazy-loaded heavy features
-│   │   └── expansion.ts         2D/3D expansion and layer helpers
+│   │   │                         View toolbar and optional editor
+│   │   └── expansion.ts         Explorer path expansion helpers
 │   ├── components/
-│   │   ├── three/               Small reusable parts of the 3D renderer
 │   │   ├── CodeEditor.tsx       Ace editor and Flutter actions
 │   │   ├── FileExplorer.tsx     Sidebar folder tree
-│   │   ├── InspectorPanel.tsx   Selection, imports, and symbols
-│   │   ├── ThreeVisualizer.tsx  3D scene state and navigation
+│   │   ├── InspectorPanel.tsx   Selection and relationship explanations
+│   │   ├── LogicalWorkflowVisualizer.tsx
+│   │   │                         Semantic workflow and relationship filters
 │   │   └── TwoDVisualizer.tsx   2D workflow layout and navigation
 │   ├── config/
 │   │   └── ui.ts                Shared UI defaults
 │   ├── data/
 │   │   └── sampleProject.ts     Built-in Flutter demonstration project
 │   ├── visualization/
-│   │   └── buildVisualGraph.ts  Shared graph creation and layout
+│   │   ├── buildVisualGraph.ts  Project structure graph
+│   │   ├── buildLogicalWorkflowGraph.ts
+│   │   │                         Semantic graph and external dependencies
+│   │   ├── logicalWorkflowLayout.ts
+│   │   │                         Layered logical graph layout and routing
+│   │   └── twoDLayout.ts        Project map layout and routing
 │   ├── App.tsx                  Application state and feature orchestration
 │   ├── styles.css               Styles grouped by feature comments
 │   └── types.ts                 Shared project, graph, and Electron API types
@@ -74,10 +79,10 @@ strict TypeScript checks and creates a production renderer build.
 1. Electron scans a selected folder and returns a `ProjectPayload`.
 2. `analyzeProject` converts raw files into an `AnalyzedProject`.
 3. A language adapter extracts symbols, imports, and resolved relationships.
-4. `buildVisualGraph` converts the analyzed project into visible nodes and
-   edges according to the currently expanded folders and files.
-5. The 2D and 3D renderers apply their own layout and interaction behavior to
-   that shared graph.
+4. `buildVisualGraph` converts the analyzed project into the expandable project
+   map.
+5. `buildLogicalWorkflowGraph` converts semantic relationships into the logic
+   map, including external packages and APIs.
 6. `InspectorPanel` reads the same analyzed project to explain outgoing and
    incoming relationships.
 
@@ -91,39 +96,34 @@ consume graph data. A language adapter should not contain rendering code.
 - the active project payload
 - selected node
 - expanded folder and file IDs
-- current 2D or 3D view
+- current project or logic map
 - guided or advanced mode
 - editor visibility
-- camera reset and 2D zoom values
+- independent zoom and custom positions for both maps
 
 The components in `src/app/` render the major shell regions. They receive
 explicit props and do not duplicate the project model.
 
-Expansion differs by view:
-
-- 2D permits multiple open items and uses free expansion.
-- 3D permits one open item per depth layer.
-- `src/app/expansion.ts` is the single place for ID and layer calculations.
+The project map permits multiple open folders and files. The logic map always
+shows detected code parts so filtering a relationship never silently changes
+the analyzed model.
 
 ## Production build strategy
 
-The Vite configuration keeps startup light and gives large optional engines
-stable chunks:
+The Vite configuration keeps startup light and gives the optional editor a
+stable chunk:
 
 - the normal 2D workspace is part of the initial experience
 - Ace and `CodeEditor` load only after opening source code
-- Three.js, React Three Fiber, Drei, and `ThreeVisualizer` load only after
-  opening the 3D map
 - React and icon dependencies have cacheable vendor chunks
 - generated files are grouped under `dist/assets/entry`,
   `dist/assets/chunks`, and `dist/assets/css`
 
-The large editor and 3D chunks are intentional. They are not preloaded by the
-production HTML, so low-spec systems do not pay their parsing or execution cost
-until those features are requested.
+The editor chunk is not preloaded by the production HTML, so low-spec systems
+do not pay its parsing or execution cost until source view is requested.
 
 After changing imports, inspect `dist/index.html` after a build. It should not
-preload `editor-engine` or `visualizer-3d-engine`.
+preload `editor-engine`.
 
 ## Adding a language analyzer
 
@@ -147,7 +147,7 @@ Avoid adding language-specific conditions to either visualizer.
 
 ## Editing the visualizers
 
-Shared graph behavior belongs in:
+Project structure graph behavior belongs in:
 
 ```text
 src/visualization/buildVisualGraph.ts
@@ -159,20 +159,41 @@ src/visualization/buildVisualGraph.ts
 src/components/TwoDVisualizer.tsx
 ```
 
-3D camera and gesture behavior belongs in:
+Logical relationship graph construction belongs in:
 
 ```text
-src/components/ThreeVisualizer.tsx
+src/visualization/buildLogicalWorkflowGraph.ts
 ```
 
-Reusable 3D node presentation, edge routing, and constants belong in:
+Logical layout, routing, filters, panning, and zooming belong in:
 
 ```text
-src/components/three/
+src/visualization/logicalWorkflowLayout.ts
+src/components/LogicalWorkflowVisualizer.tsx
 ```
 
 This separation prevents a visual styling change from becoming mixed with
 graph-generation or parser logic.
+
+## Large logic maps
+
+The logic map has several safeguards for large repositories:
+
+- its default large-map mode keeps a connected working set centered on the
+  selected item, while preserving the analyzed graph in memory
+- **Load full map** is available directly for moderate maps, while very large
+  maps require an explicit **Force full map** override
+- forced full maps still keep their SVG and mounted elements viewport-sized
+- cards and SVG paths outside the current viewport are not mounted
+- edge routing indexes node obstacles by depth instead of scanning the entire
+  map for every possible route
+- strongly connected components use iterative traversal, so deep call chains
+  cannot overflow the JavaScript call stack
+
+The thresholds and working-set budgets are defined near the top of
+`LogicalWorkflowVisualizer.tsx`. Increase them only after profiling both the
+layout time and the number of mounted DOM/SVG elements. Do not remove viewport
+culling or the hard full-map guard when changing those limits.
 
 ## Electron boundary
 
@@ -192,7 +213,9 @@ any write operation.
 
 ## Current boundaries
 
-- Dart analysis is a lightweight source parser, not a complete Dart analyzer.
+- Dart analysis is currently a lightweight static source parser. Relationships
+  marked `inferred` can be ambiguous; the IDE roadmap replaces this source of
+  truth with the Dart language server and analyzer APIs.
 - Java and Python are recognized file kinds but do not yet have full adapters.
 - `npm run build` creates the renderer used by Electron; it does not create an
   installer or signed desktop package.
