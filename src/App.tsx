@@ -13,8 +13,8 @@ import {
 import { ProjectSidebar } from "./app/ProjectSidebar";
 import { VisualizerWorkspace } from "./app/VisualizerWorkspace";
 import { WorkspaceResizer } from "./app/WorkspaceResizer";
-import { InspectorPanel } from "./components/InspectorPanel";
-import type { ExplorerEntry } from "./components/FileExplorer";
+import type { ExplorerEntry } from "./features/explorer/FileExplorer";
+import { InspectorPanel } from "./features/inspector/InspectorPanel";
 import { DEFAULT_TWO_D_ZOOM } from "./config/ui";
 import { sampleProject } from "./data/sampleProject";
 import type {
@@ -41,13 +41,17 @@ interface ExplorerClipboard {
   entry: ExplorerEntry;
 }
 
+interface AppProps {
+  safeMode?: boolean;
+}
+
 function defaultPaneWidths(workspaceWidth: number) {
   return workspaceWidth <= 1240
     ? { explorer: 240, inspector: 340 }
     : { explorer: 280, inspector: 380 };
 }
 
-export default function App() {
+export default function App({ safeMode = false }: AppProps) {
   const [payload, setPayload] = useState<ProjectPayload>(sampleProject);
   const project = useMemo(() => analyzeProject(payload), [payload]);
   const [experienceMode, setExperienceMode] =
@@ -76,7 +80,11 @@ export default function App() {
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [openingProject, setOpeningProject] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(
+    safeMode
+      ? "Divex recovered in safe mode. The 2D map and large-project protection are active."
+      : null,
+  );
   const [projectIsLocal, setProjectIsLocal] = useState(false);
   const [explorerClipboard, setExplorerClipboard] =
     useState<ExplorerClipboard | null>(null);

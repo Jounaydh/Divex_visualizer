@@ -18,7 +18,7 @@ import "ace-builds/src-noconflict/mode-text";
 import "ace-builds/src-noconflict/mode-yaml";
 import "ace-builds/src-noconflict/theme-one_dark";
 import { useEffect, useRef, useState } from "react";
-import type { AnalyzedFile, ProjectToolResult } from "../types";
+import type { AnalyzedFile, ProjectToolResult } from "../../types";
 
 interface CodeEditorProps {
   file: AnalyzedFile;

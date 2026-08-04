@@ -8,14 +8,20 @@ import type {
   WorkflowDirection,
   WorkflowPosition,
 } from "../types";
-import { TwoDVisualizer } from "../components/TwoDVisualizer";
-import { LogicalWorkflowVisualizer } from "../components/LogicalWorkflowVisualizer";
+import { FeatureErrorBoundary } from "../components/FeatureErrorBoundary";
+import { DEFAULT_TWO_D_ZOOM } from "../config/ui";
+import { TwoDVisualizer } from "../features/project-map/TwoDVisualizer";
 import { useElementFullscreen } from "./useElementFullscreen";
 import { VisualizerToolbar } from "./VisualizerToolbar";
 
 const CodeEditor = lazy(() =>
-  import("../components/CodeEditor").then((module) => ({
+  import("../features/editor/CodeEditor").then((module) => ({
     default: module.CodeEditor,
+  })),
+);
+const LogicalWorkflowVisualizer = lazy(() =>
+  import("../features/logic-map/LogicalWorkflowVisualizer").then((module) => ({
+    default: module.LogicalWorkflowVisualizer,
   })),
 );
 
@@ -115,6 +121,55 @@ export function VisualizerWorkspace({
       );
     }
   };
+  const activeFeature = showCode
+    ? "Source editor"
+    : viewMode === "logic"
+      ? "Logic map"
+      : "2D project map";
+  const recoveryActions = showCode
+    ? [
+        {
+          label: "Return to project map",
+          onSelect: onShowVisualizer,
+          primary: true,
+        },
+      ]
+    : viewMode === "logic"
+      ? [
+          {
+            label: "Restore protected logic map",
+            onSelect: () => {
+              onLogicPositionsChange({});
+              onLogicZoomChange(0.8);
+              onShowVisualizer();
+            },
+            primary: true,
+          },
+          {
+            label: "Open 2D project map",
+            onSelect: () => onChangeView("2d"),
+          },
+        ]
+      : [
+          {
+            label: "Reset project map",
+            onSelect: () => {
+              onTwoDPositionsChange({});
+              onTwoDZoomChange(DEFAULT_TWO_D_ZOOM);
+            },
+            primary: true,
+          },
+          {
+            label: "Open protected logic map",
+            onSelect: () => onChangeView("logic"),
+          },
+        ];
+  const featureResetKey = [
+    project.rootPath,
+    project.files.length,
+    activeFeature,
+    selectedFile?.id ?? "",
+  ].join(":");
 
   return (
     <section
@@ -142,52 +197,58 @@ export function VisualizerWorkspace({
       />
 
       <div className="visualizer-canvas">
-        <Suspense
-          fallback={
-            <LoadingWorkspace
-              title="Loading workspace…"
-              description="Preparing only the tools needed for this view"
-            />
-          }
+        <FeatureErrorBoundary
+          featureName={activeFeature}
+          resetKey={featureResetKey}
+          recoveryActions={recoveryActions}
         >
-          {showCode && selectedFile ? (
-            <CodeEditor
-              file={selectedFile}
-              projectName={project.name}
-              rootPath={project.rootPath}
-              onClose={onShowVisualizer}
-              onPersist={onPersistFile}
-            />
-          ) : viewMode === "logic" ? (
-            <LogicalWorkflowVisualizer
-              project={project}
-              selectedId={selectedId}
-              zoom={logicZoom}
-              direction={workflowDirection}
-              freePositioning={freePositioning}
-              customPositions={logicPositions}
-              onZoomChange={onLogicZoomChange}
-              onCustomPositionsChange={onLogicPositionsChange}
-              onSelectNode={selectNode}
-            />
-          ) : (
-            <TwoDVisualizer
-              project={project}
-              expandedFolders={expandedFolders}
-              expandedFiles={expandedFiles}
-              selectedId={selectedId}
-              zoom={twoDZoom}
-              direction={workflowDirection}
-              freePositioning={freePositioning}
-              customPositions={twoDPositions}
-              onZoomChange={onTwoDZoomChange}
-              onCustomPositionsChange={onTwoDPositionsChange}
-              onSelectNode={selectNode}
-              onToggleFolder={onToggleFolderFreely}
-              onToggleFile={onToggleFileFreely}
-            />
-          )}
-        </Suspense>
+          <Suspense
+            fallback={
+              <LoadingWorkspace
+                title="Loading workspace…"
+                description="Preparing only the tools needed for this view"
+              />
+            }
+          >
+            {showCode && selectedFile ? (
+              <CodeEditor
+                file={selectedFile}
+                projectName={project.name}
+                rootPath={project.rootPath}
+                onClose={onShowVisualizer}
+                onPersist={onPersistFile}
+              />
+            ) : viewMode === "logic" ? (
+              <LogicalWorkflowVisualizer
+                project={project}
+                selectedId={selectedId}
+                zoom={logicZoom}
+                direction={workflowDirection}
+                freePositioning={freePositioning}
+                customPositions={logicPositions}
+                onZoomChange={onLogicZoomChange}
+                onCustomPositionsChange={onLogicPositionsChange}
+                onSelectNode={selectNode}
+              />
+            ) : (
+              <TwoDVisualizer
+                project={project}
+                expandedFolders={expandedFolders}
+                expandedFiles={expandedFiles}
+                selectedId={selectedId}
+                zoom={twoDZoom}
+                direction={workflowDirection}
+                freePositioning={freePositioning}
+                customPositions={twoDPositions}
+                onZoomChange={onTwoDZoomChange}
+                onCustomPositionsChange={onTwoDPositionsChange}
+                onSelectNode={selectNode}
+                onToggleFolder={onToggleFolderFreely}
+                onToggleFile={onToggleFileFreely}
+              />
+            )}
+          </Suspense>
+        </FeatureErrorBoundary>
 
         {!showCode && viewMode === "logic" && (
           <div className="canvas-help">

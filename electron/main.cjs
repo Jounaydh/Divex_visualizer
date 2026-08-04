@@ -15,6 +15,8 @@ const { promisify } = require("node:util");
 const execFileAsync = promisify(execFile);
 
 const isDevelopment = !app.isPackaged;
+const RENDERER_RECOVERY_WINDOW_MS = 60_000;
+const MAX_RENDERER_REPORT_LENGTH = 24_000;
 const supportedExtensions = new Set([
   ".dart",
   ".java",
@@ -36,6 +38,45 @@ const ignoredDirectories = new Set([
 ]);
 const MAX_FILES = 2000;
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
+
+function clippedReportValue(value) {
+  return typeof value === "string"
+    ? value.slice(0, MAX_RENDERER_REPORT_LENGTH)
+    : undefined;
+}
+
+async function appendRendererDiagnostic(entry) {
+  try {
+    const logDirectory = path.join(app.getPath("userData"), "logs");
+    await fs.mkdir(logDirectory, { recursive: true });
+    await fs.appendFile(
+      path.join(logDirectory, "renderer-errors.jsonl"),
+      `${JSON.stringify({
+        ...entry,
+        recordedAt: new Date().toISOString(),
+        appVersion: app.getVersion(),
+        platform: process.platform,
+      })}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    console.error("Divex could not write its renderer diagnostic.", error);
+  }
+}
+
+function sanitizeRendererReport(report) {
+  return {
+    kind: "renderer-error",
+    source: clippedReportValue(report?.source) ?? "unknown",
+    message:
+      clippedReportValue(report?.message) ?? "Unknown renderer error",
+    stack: clippedReportValue(report?.stack),
+    componentStack: clippedReportValue(report?.componentStack),
+    feature: clippedReportValue(report?.feature),
+    route: clippedReportValue(report?.route),
+    occurredAt: clippedReportValue(report?.occurredAt),
+  };
+}
 
 function resolveProjectFile(rootPath, relativePath) {
   const resolvedRoot = path.resolve(rootPath);
@@ -382,6 +423,91 @@ async function openTerminalWindow(directory, command) {
   }
 }
 
+function loadRenderer(window, safeMode = false) {
+  if (isDevelopment) {
+    const url = new URL("http://localhost:5173");
+    if (safeMode) url.searchParams.set("safeMode", "1");
+    return window.loadURL(url.toString());
+  }
+  return window.loadFile(path.join(__dirname, "..", "dist", "index.html"), {
+    query: safeMode ? { safeMode: "1" } : {},
+  });
+}
+
+function attachRendererRecovery(window) {
+  let recentCrashes = [];
+  let unresponsiveDialogOpen = false;
+
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (details.reason === "clean-exit" || window.isDestroyed()) return;
+
+    const now = Date.now();
+    recentCrashes = recentCrashes.filter(
+      (timestamp) => now - timestamp < RENDERER_RECOVERY_WINDOW_MS,
+    );
+    recentCrashes.push(now);
+    void appendRendererDiagnostic({
+      kind: "render-process-gone",
+      reason: details.reason,
+      exitCode: details.exitCode,
+      crashCount: recentCrashes.length,
+    });
+
+    if (recentCrashes.length === 1) {
+      setTimeout(() => {
+        if (!window.isDestroyed()) void loadRenderer(window, true);
+      }, 300);
+      return;
+    }
+
+    void dialog
+      .showMessageBox(window, {
+        type: "warning",
+        title: "Divex renderer stopped",
+        message: "The visual workspace stopped more than once.",
+        detail:
+          "Reloading in safe mode starts with the 2D map and large-project protection. Your project files are not changed.",
+        buttons: ["Reload in safe mode", "Close window"],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        if (window.isDestroyed()) return;
+        if (response === 0) void loadRenderer(window, true);
+        else window.close();
+      });
+  });
+
+  window.on("unresponsive", () => {
+    if (unresponsiveDialogOpen || window.isDestroyed()) return;
+    unresponsiveDialogOpen = true;
+    void appendRendererDiagnostic({ kind: "renderer-unresponsive" });
+    void dialog
+      .showMessageBox(window, {
+        type: "warning",
+        title: "Divex is taking longer than expected",
+        message: "The visual workspace is not responding.",
+        detail:
+          "You can keep waiting for a large layout or recover with the protected 2D workspace.",
+        buttons: ["Keep waiting", "Reload in safe mode"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        unresponsiveDialogOpen = false;
+        if (response === 1 && !window.isDestroyed()) {
+          void loadRenderer(window, true);
+        }
+      });
+  });
+
+  window.on("responsive", () => {
+    unresponsiveDialogOpen = false;
+  });
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1510,
@@ -399,12 +525,20 @@ function createWindow() {
     },
   });
 
-  if (isDevelopment) {
-    window.loadURL("http://localhost:5173");
-  } else {
-    window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
-  }
+  attachRendererRecovery(window);
+  void loadRenderer(window);
 }
+
+ipcMain.handle("app:report-renderer-error", async (_event, report) => {
+  await appendRendererDiagnostic(sanitizeRendererReport(report));
+  return { success: true };
+});
+
+ipcMain.handle("app:reload-renderer", async (event, args) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) return;
+  await loadRenderer(window, Boolean(args?.safeMode));
+});
 
 ipcMain.handle("project:choose", async () => {
   const result = await dialog.showOpenDialog({

@@ -28,5 +28,9 @@ contextBridge.exposeInMainWorld("divex", {
   saveProjectFile: (args) => ipcRenderer.invoke("project:save-file", args),
   formatDartFile: (args) => ipcRenderer.invoke("project:format-dart", args),
   analyzeFlutter: (args) => ipcRenderer.invoke("project:analyze-flutter", args),
+  reportRendererError: (report) =>
+    ipcRenderer.invoke("app:report-renderer-error", report),
+  reloadRenderer: (args) =>
+    ipcRenderer.invoke("app:reload-renderer", args),
   platform: process.platform,
 });

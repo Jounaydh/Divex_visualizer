@@ -7,7 +7,7 @@ import {
 import {
   FileExplorer,
   type ExplorerEntry,
-} from "../components/FileExplorer";
+} from "../features/explorer/FileExplorer";
 import type {
   AnalyzedFile,
   AnalyzedProject,

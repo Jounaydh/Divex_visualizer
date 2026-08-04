@@ -5,6 +5,9 @@ losing its beginner-first project and logic maps. The visualizer remains a
 client of trusted language services; it must not become the parser, compiler,
 or debugger itself.
 
+This is a forward-looking plan. See [Project status](PROJECT_STATUS.md) and
+[Features](FEATURES.md) for the current implementation.
+
 ## Product promise
 
 Divex should let a beginner answer three questions immediately:

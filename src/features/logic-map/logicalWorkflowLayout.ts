@@ -3,7 +3,7 @@ import type {
   VisualNode,
   WorkflowDirection,
   WorkflowPosition,
-} from "../types";
+} from "../../types";
 
 export const LOGICAL_NODE_WIDTH = 176;
 export const LOGICAL_NODE_HEIGHT = 58;

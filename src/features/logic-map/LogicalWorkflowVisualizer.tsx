@@ -1,11 +1,4 @@
-import {
-  Eye,
-  EyeOff,
-  Focus,
-  Minus,
-  Plus,
-  Route,
-} from "lucide-react";
+import { Focus, Minus, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -19,20 +12,33 @@ import type {
   VisualNode,
   WorkflowDirection,
   WorkflowPosition,
-} from "../types";
+} from "../../types";
 import {
   buildLogicalWorkflowGraph,
   LOGICAL_EDGE_KINDS,
-  LOGICAL_EDGE_LABELS,
   type LogicalEdgeKind,
-} from "../visualization/buildLogicalWorkflowGraph";
+} from "./buildLogicalWorkflowGraph";
+import { LogicalFilterPanel } from "./LogicalFilterPanel";
 import {
   createLogicalEdgeRoutes,
   createLogicalWorkflowLayout,
   LOGICAL_NODE_HEIGHT,
   LOGICAL_NODE_WIDTH,
-} from "../visualization/logicalWorkflowLayout";
-import { WorkflowNode } from "./WorkflowNode";
+} from "./logicalWorkflowLayout";
+import {
+  edgeRenderPriority,
+  EXECUTION_EDGE_KINDS,
+  filterLogicalWorkflowGraph,
+  FREE_PAN_PADDING,
+  isLargeLogicalGraph,
+  isUnsafeFullLogicalGraph,
+  MAX_VIEWPORT_EDGES,
+  profileLogicalOperation,
+  scopeLogicalWorkflowGraph,
+  VIEWPORT_OVERSCAN,
+  type LogicalViewport,
+} from "./logicalWorkflowPerformance";
+import { WorkflowNode } from "../../components/WorkflowNode";
 
 interface LogicalWorkflowVisualizerProps {
   project: AnalyzedProject;
@@ -51,39 +57,6 @@ interface LogicalWorkflowVisualizerProps {
 const DEFAULT_ZOOM = 0.8;
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 1.8;
-const EXECUTION_EDGE_KINDS: LogicalEdgeKind[] = [
-  "starts",
-  "calls",
-  "creates",
-];
-const LARGE_GRAPH_NODE_THRESHOLD = 450;
-const LARGE_GRAPH_EDGE_THRESHOLD = 900;
-const UNSAFE_FULL_GRAPH_NODE_THRESHOLD = 1200;
-const UNSAFE_FULL_GRAPH_EDGE_THRESHOLD = 3000;
-const PERFORMANCE_NODE_BUDGET = 180;
-const PERFORMANCE_EDGE_BUDGET = 320;
-const MAX_VIEWPORT_EDGES = 420;
-const VIEWPORT_OVERSCAN = 420;
-const FREE_PAN_PADDING = 1200;
-
-interface LogicalViewport {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-const edgeRenderPriority: Record<LogicalEdgeKind, number> = {
-  starts: 0,
-  calls: 1,
-  creates: 2,
-  extends: 3,
-  implements: 3,
-  defines: 4,
-  imports: 5,
-  uses: 6,
-  contains: 7,
-};
 
 export function LogicalWorkflowVisualizer({
   project,
@@ -96,7 +69,13 @@ export function LogicalWorkflowVisualizer({
   onCustomPositionsChange,
   onSelectNode,
 }: LogicalWorkflowVisualizerProps) {
-  const graph = useMemo(() => buildLogicalWorkflowGraph(project), [project]);
+  const graph = useMemo(
+    () =>
+      profileLogicalOperation("Graph construction", () =>
+        buildLogicalWorkflowGraph(project),
+      ),
+    [project],
+  );
   const [visibleKinds, setVisibleKinds] = useState<Set<LogicalEdgeKind>>(
     () => new Set(EXECUTION_EDGE_KINDS),
   );
@@ -132,103 +111,30 @@ export function LogicalWorkflowVisualizer({
     customPositionsRef.current = customPositions;
   }, [customPositions]);
 
-  const filteredEdges = useMemo(
-    () => graph.edges.filter((edge) => visibleKinds.has(edge.kind)),
-    [graph.edges, visibleKinds],
+  const filteredGraph = useMemo(
+    () => filterLogicalWorkflowGraph(graph, visibleKinds, selectedId),
+    [graph, selectedId, visibleKinds],
   );
-  const filteredNodes = useMemo(() => {
-    const endpointIds = new Set(["project"]);
-    filteredEdges.forEach((edge) => {
-      endpointIds.add(edge.source);
-      endpointIds.add(edge.target);
-    });
-    if (selectedId) endpointIds.add(selectedId);
-    return graph.nodes.filter((node) => endpointIds.has(node.id));
-  }, [filteredEdges, graph.nodes, selectedId]);
-  const isLargeGraph =
-    filteredNodes.length > LARGE_GRAPH_NODE_THRESHOLD ||
-    filteredEdges.length > LARGE_GRAPH_EDGE_THRESHOLD;
-  const isUnsafeFullGraph =
-    filteredNodes.length > UNSAFE_FULL_GRAPH_NODE_THRESHOLD ||
-    filteredEdges.length > UNSAFE_FULL_GRAPH_EDGE_THRESHOLD;
+  const filteredNodes = filteredGraph.nodes;
+  const filteredEdges = filteredGraph.edges;
+  const isLargeGraph = isLargeLogicalGraph(filteredGraph);
+  const isUnsafeFullGraph = isUnsafeFullLogicalGraph(filteredGraph);
   const fullGraphRequested = fullGraphProjectKey === project.rootPath;
   const performanceMode = !fullGraphRequested;
-  const scopedGraph = useMemo(() => {
-    if (!isLargeGraph || !performanceMode) {
-      return { nodes: filteredNodes, edges: filteredEdges };
-    }
-
-    const allowedNodeIds = new Set(filteredNodes.map((node) => node.id));
-    const adjacency = new Map<string, VisualNode["id"][]>();
-    [...filteredEdges]
-      .sort(
-        (left, right) =>
-          edgeRenderPriority[left.kind] - edgeRenderPriority[right.kind],
-      )
-      .forEach((edge) => {
-        const sourceLinks = adjacency.get(edge.source) ?? [];
-        sourceLinks.push(edge.target);
-        adjacency.set(edge.source, sourceLinks);
-        const targetLinks = adjacency.get(edge.target) ?? [];
-        targetLinks.push(edge.source);
-        adjacency.set(edge.target, targetLinks);
-      });
-
-    const includedIds = new Set<string>();
-    const queue = [selectedId, "project"].filter(
-      (id): id is string => Boolean(id && allowedNodeIds.has(id)),
-    );
-    let cursor = 0;
-    while (
-      cursor < queue.length &&
-      includedIds.size < PERFORMANCE_NODE_BUDGET
-    ) {
-      const nodeId = queue[cursor];
-      cursor += 1;
-      if (includedIds.has(nodeId)) continue;
-      includedIds.add(nodeId);
-      (adjacency.get(nodeId) ?? []).forEach((neighborId) => {
-        if (
-          !includedIds.has(neighborId) &&
-          queue.length < PERFORMANCE_NODE_BUDGET * 3
-        ) {
-          queue.push(neighborId);
-        }
-      });
-    }
-
-    const scopedEdges = [...filteredEdges]
-      .filter(
-        (edge) =>
-          includedIds.has(edge.source) && includedIds.has(edge.target),
-      )
-      .sort(
-        (left, right) =>
-          edgeRenderPriority[left.kind] - edgeRenderPriority[right.kind],
-      )
-      .slice(0, PERFORMANCE_EDGE_BUDGET);
-    const connectedIds = new Set(["project"]);
-    if (selectedId) connectedIds.add(selectedId);
-    scopedEdges.forEach((edge) => {
-      connectedIds.add(edge.source);
-      connectedIds.add(edge.target);
-    });
-
-    return {
-      nodes: filteredNodes.filter((node) => connectedIds.has(node.id)),
-      edges: scopedEdges,
-    };
-  }, [
-    filteredEdges,
-    filteredNodes,
-    isLargeGraph,
-    performanceMode,
-    selectedId,
-  ]);
+  const scopedGraph = useMemo(
+    () =>
+      isLargeGraph && performanceMode
+        ? scopeLogicalWorkflowGraph(filteredGraph, selectedId)
+        : filteredGraph,
+    [filteredGraph, isLargeGraph, performanceMode, selectedId],
+  );
   const visibleEdges = scopedGraph.edges;
   const visibleNodes = scopedGraph.nodes;
   const layout = useMemo(
-    () => createLogicalWorkflowLayout(visibleNodes, visibleEdges, direction),
+    () =>
+      profileLogicalOperation("Automatic layout", () =>
+        createLogicalWorkflowLayout(visibleNodes, visibleEdges, direction),
+      ),
     [direction, visibleEdges, visibleNodes],
   );
   const positions = useMemo(() => {
@@ -281,11 +187,13 @@ export function LogicalWorkflowVisualizer({
   }, [selectedId, visibleEdges]);
   const edgeRoutes = useMemo(
     () =>
-      createLogicalEdgeRoutes(
-        visibleNodes,
-        visibleEdges,
-        positions,
-        direction,
+      profileLogicalOperation("Edge routing", () =>
+        createLogicalEdgeRoutes(
+          visibleNodes,
+          visibleEdges,
+          positions,
+          direction,
+        ),
       ),
     [direction, positions, visibleEdges, visibleNodes],
   );
@@ -448,129 +356,37 @@ export function LogicalWorkflowVisualizer({
         freePositioning ? "free-positioning" : ""
       }`}
     >
-      <div
-        className={`logical-filter-panel ${filtersOpen ? "open" : ""}`}
-      >
-        <button
-          type="button"
-          className="logical-filter-heading"
-          onClick={() => setFiltersOpen((value) => !value)}
-          aria-expanded={filtersOpen}
-        >
-          <span>
-            <Route size={14} />
-            <strong>Code logic</strong>
-          </span>
-          {filtersOpen ? <EyeOff size={13} /> : <Eye size={13} />}
-        </button>
-        {filtersOpen && (
-          <>
-            <p>
-              Execution flow stays focused by default. Turn on definitions or
-              imports when you need the surrounding architecture.
-            </p>
-            {isLargeGraph && (
-              <div className="logical-performance-notice">
-                <span>
-                  <strong>
-                    {isUnsafeFullGraph && performanceMode
-                      ? "Large project protected"
-                      : isUnsafeFullGraph
-                        ? "Full map forced"
-                      : performanceMode
-                        ? "Large-map protection on"
-                        : "Full map"}
-                  </strong>
-                  <small>
-                    {isUnsafeFullGraph && performanceMode
-                      ? `Kader-sized maps cannot safely use one giant surface. Showing ${visibleNodes.length} of ${filteredNodes.length} items and ${visibleEdges.length} of ${filteredEdges.length} links around the current selection.`
-                      : isUnsafeFullGraph
-                        ? `Showing all ${filteredNodes.length} items and ${filteredEdges.length} links. Layout may pause briefly, but off-screen cards and lines remain suspended.`
-                      : performanceMode
-                      ? `Showing ${visibleNodes.length} of ${filteredNodes.length} items and ${visibleEdges.length} of ${filteredEdges.length} links. Select an item to rebuild the map around it.`
-                      : `${filteredNodes.length} items and ${filteredEdges.length} links. Off-screen elements are still paused.`}
-                  </small>
-                </span>
-                <button
-                  type="button"
-                  disabled={isGraphPending}
-                  onClick={() =>
-                    startGraphTransition(() =>
-                      setFullGraphProjectKey(
-                        performanceMode ? project.rootPath : null,
-                      ),
-                    )
-                  }
-                >
-                  {isGraphPending
-                    ? "Loading…"
-                    : isUnsafeFullGraph && performanceMode
-                      ? "Force full map"
-                      : performanceMode
-                      ? "Load full map"
-                      : "Restore protection"}
-                </button>
-              </div>
-            )}
-            <button
-              type="button"
-              className={`logical-focus-toggle ${
-                focusConnections ? "active" : ""
-              }`}
-              aria-pressed={focusConnections}
-              disabled={!selectedId}
-              onClick={() => setFocusConnections((value) => !value)}
-            >
-              <Focus size={13} />
-              <span>
-                <strong>Focus selected links</strong>
-                <small>
-                  {selectedId
-                    ? focusConnections
-                      ? "Unrelated items are faded"
-                      : "Everything remains visible"
-                    : "Select a card to enable"}
-                </small>
-              </span>
-              <i className={`setting-toggle ${focusConnections ? "on" : ""}`}>
-                <b />
-              </i>
-            </button>
-            <div className="logical-filter-grid">
-              {LOGICAL_EDGE_KINDS.map((kind) => (
-                <button
-                  type="button"
-                  className={visibleKinds.has(kind) ? "active" : ""}
-                  key={kind}
-                  onClick={() => toggleKind(kind)}
-                >
-                  <i className={`logic-swatch relation-${kind}`} />
-                  <span>{LOGICAL_EDGE_LABELS[kind]}</span>
-                  <small>{graph.counts[kind]}</small>
-                </button>
-              ))}
-            </div>
-            <div className="logical-presets">
-              <button
-                type="button"
-                onClick={() =>
-                  setVisibleKinds(new Set(EXECUTION_EDGE_KINDS))
-                }
-              >
-                Execution flow
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setVisibleKinds(new Set(LOGICAL_EDGE_KINDS))
-                }
-              >
-                Every relationship
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+      <LogicalFilterPanel
+        counts={graph.counts}
+        filtersOpen={filtersOpen}
+        focusConnections={focusConnections}
+        selectedId={selectedId}
+        visibleKinds={visibleKinds}
+        isLargeGraph={isLargeGraph}
+        isUnsafeFullGraph={isUnsafeFullGraph}
+        performanceMode={performanceMode}
+        isGraphPending={isGraphPending}
+        visibleNodeCount={visibleNodes.length}
+        filteredNodeCount={filteredNodes.length}
+        visibleEdgeCount={visibleEdges.length}
+        filteredEdgeCount={filteredEdges.length}
+        onToggleOpen={() => setFiltersOpen((value) => !value)}
+        onToggleFocus={() => setFocusConnections((value) => !value)}
+        onToggleKind={toggleKind}
+        onShowExecution={() =>
+          setVisibleKinds(new Set(EXECUTION_EDGE_KINDS))
+        }
+        onShowEveryRelationship={() =>
+          setVisibleKinds(new Set(LOGICAL_EDGE_KINDS))
+        }
+        onTogglePerformanceMode={() =>
+          startGraphTransition(() =>
+            setFullGraphProjectKey(
+              performanceMode ? project.rootPath : null,
+            ),
+          )
+        }
+      />
 
       <div
         className={`two-d-scroll logical-scroll ${

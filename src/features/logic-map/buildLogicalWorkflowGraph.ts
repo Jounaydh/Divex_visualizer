@@ -3,7 +3,7 @@ import type {
   LogicalRelationKind,
   VisualEdge,
   VisualNode,
-} from "../types";
+} from "../../types";
 
 export type LogicalEdgeKind = VisualEdge["kind"];
 

@@ -14,7 +14,7 @@ import type {
   AnalyzedFile,
   AnalyzedProject,
   VisualNode,
-} from "../types";
+} from "../../types";
 
 interface InspectorPanelProps {
   project: AnalyzedProject;

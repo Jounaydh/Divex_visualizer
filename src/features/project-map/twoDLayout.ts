@@ -2,7 +2,7 @@ import type {
   VisualNode,
   WorkflowDirection,
   WorkflowPosition,
-} from "../types";
+} from "../../types";
 
 export const TWO_D_NODE_WIDTH = 150;
 export const TWO_D_NODE_HEIGHT = 52;

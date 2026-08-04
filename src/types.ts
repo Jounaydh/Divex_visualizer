@@ -154,6 +154,16 @@ export interface ProjectTaskListResult extends ProjectToolResult {
   tasks?: ProjectTask[];
 }
 
+export interface RendererErrorReport {
+  source: "react-boundary" | "window-error" | "unhandled-rejection";
+  message: string;
+  stack?: string;
+  componentStack?: string;
+  feature?: string;
+  route: string;
+  occurredAt: string;
+}
+
 declare global {
   interface Window {
     divex?: {
@@ -225,6 +235,12 @@ declare global {
       analyzeFlutter: (args: {
         rootPath: string;
       }) => Promise<ProjectToolResult>;
+      reportRendererError: (
+        report: RendererErrorReport,
+      ) => Promise<{ success: boolean }>;
+      reloadRenderer: (args: {
+        safeMode: boolean;
+      }) => Promise<void>;
       platform: string;
     };
   }

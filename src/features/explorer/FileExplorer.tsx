@@ -25,7 +25,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import type { AnalyzedFile, FolderNode } from "../types";
+import type { AnalyzedFile, FolderNode } from "../../types";
 
 export interface ExplorerEntry {
   kind: "file" | "folder";

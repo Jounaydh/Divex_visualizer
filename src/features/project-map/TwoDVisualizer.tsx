@@ -10,8 +10,8 @@ import type {
   VisualNode,
   WorkflowDirection,
   WorkflowPosition,
-} from "../types";
-import { buildVisualGraph } from "../visualization/buildVisualGraph";
+} from "../../types";
+import { buildVisualGraph } from "./buildVisualGraph";
 import {
   createTwoDEdgePath,
   createTwoDLayout,
@@ -19,8 +19,8 @@ import {
   mergeTwoDPositions,
   TWO_D_NODE_HEIGHT,
   TWO_D_NODE_WIDTH,
-} from "../visualization/twoDLayout";
-import { WorkflowNode } from "./WorkflowNode";
+} from "./twoDLayout";
+import { WorkflowNode } from "../../components/WorkflowNode";
 
 interface TwoDVisualizerProps {
   project: AnalyzedProject;
