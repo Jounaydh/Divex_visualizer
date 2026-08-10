@@ -52,6 +52,8 @@ interface LogicalWorkflowVisualizerProps {
     positions: Record<string, WorkflowPosition>,
   ) => void;
   onSelectNode: (node: VisualNode) => void;
+  autoFocusOnLayout?: boolean;
+  defaultFiltersOpen?: boolean;
 }
 
 const DEFAULT_ZOOM = 0.8;
@@ -68,6 +70,8 @@ export function LogicalWorkflowVisualizer({
   onZoomChange,
   onCustomPositionsChange,
   onSelectNode,
+  autoFocusOnLayout = true,
+  defaultFiltersOpen = true,
 }: LogicalWorkflowVisualizerProps) {
   const graph = useMemo(
     () =>
@@ -79,7 +83,7 @@ export function LogicalWorkflowVisualizer({
   const [visibleKinds, setVisibleKinds] = useState<Set<LogicalEdgeKind>>(
     () => new Set(EXECUTION_EDGE_KINDS),
   );
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(defaultFiltersOpen);
   const [focusConnections, setFocusConnections] = useState(false);
   const [fullGraphProjectKey, setFullGraphProjectKey] = useState<
     string | null
@@ -262,11 +266,27 @@ export function LogicalWorkflowVisualizer({
   );
 
   useEffect(() => {
+    if (!autoFocusOnLayout) return;
     const frame = window.requestAnimationFrame(() =>
       focusNode(selectedId ?? "project"),
     );
     return () => window.cancelAnimationFrame(frame);
-  }, [direction, focusNode, selectedId, layout.height, layout.width]);
+  }, [
+    autoFocusOnLayout,
+    direction,
+    focusNode,
+    selectedId,
+    layout.height,
+    layout.width,
+  ]);
+
+  useEffect(() => {
+    if (autoFocusOnLayout || !selectedId) return;
+    const frame = window.requestAnimationFrame(() =>
+      focusNode(selectedId),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [autoFocusOnLayout, direction, focusNode, selectedId]);
 
   useEffect(() => {
     const container = scrollRef.current;

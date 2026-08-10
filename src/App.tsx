@@ -1,26 +1,44 @@
 import {
+  lazy,
+  Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
-import { analyzeProject } from "./analysis/analyzeProject";
+import { useAnalyzedProject } from "./analysis/useAnalyzedProject";
 import { AppHeader } from "./app/AppHeader";
 import {
   folderIdsForPath,
 } from "./app/expansion";
-import { ProjectSidebar } from "./app/ProjectSidebar";
+import {
+  ProjectSidebar,
+  type SidebarView,
+} from "./app/ProjectSidebar";
 import { VisualizerWorkspace } from "./app/VisualizerWorkspace";
 import { WorkspaceResizer } from "./app/WorkspaceResizer";
 import type { ExplorerEntry } from "./features/explorer/FileExplorer";
 import { InspectorPanel } from "./features/inspector/InspectorPanel";
+import {
+  NavigationPalette,
+  type NavigationCommand,
+} from "./features/navigation/NavigationPalette";
+import {
+  definitionTarget,
+  type NavigationSearchMode,
+  type NavigationTarget,
+} from "./features/navigation/navigationIndex";
+import { useNavigationHistory } from "./features/navigation/useNavigationHistory";
+import { useIntegratedTerminal } from "./features/terminal/useIntegratedTerminal";
 import { DEFAULT_TWO_D_ZOOM } from "./config/ui";
 import { sampleProject } from "./data/sampleProject";
 import type {
   AnalyzedFile,
   ExperienceMode,
   FolderNode,
+  ProjectLoadProgress,
   ProjectPayload,
   ProjectTask,
   ViewMode,
@@ -35,6 +53,9 @@ const MIN_INSPECTOR_WIDTH = 280;
 const MAX_INSPECTOR_WIDTH = 620;
 const MIN_VISUALIZER_WIDTH = 420;
 const WORKSPACE_RESIZERS_WIDTH = 12;
+const TerminalDock = lazy(
+  () => import("./features/terminal/TerminalDock"),
+);
 
 interface ExplorerClipboard {
   mode: "cut" | "copy";
@@ -45,6 +66,22 @@ interface AppProps {
   safeMode?: boolean;
 }
 
+interface NavigationSnapshot {
+  node: VisualNode | null;
+  showCode: boolean;
+  line: number | null;
+  viewMode: ViewMode;
+}
+
+function navigationSnapshotKey(snapshot: NavigationSnapshot) {
+  return [
+    snapshot.node?.id ?? "empty",
+    snapshot.showCode ? "editor" : "map",
+    snapshot.line ?? 0,
+    snapshot.viewMode,
+  ].join(":");
+}
+
 function defaultPaneWidths(workspaceWidth: number) {
   return workspaceWidth <= 1240
     ? { explorer: 240, inspector: 340 }
@@ -53,7 +90,12 @@ function defaultPaneWidths(workspaceWidth: number) {
 
 export default function App({ safeMode = false }: AppProps) {
   const [payload, setPayload] = useState<ProjectPayload>(sampleProject);
-  const project = useMemo(() => analyzeProject(payload), [payload]);
+  const {
+    project,
+    isAnalyzing,
+    error: analysisError,
+    retry: retryAnalysis,
+  } = useAnalyzedProject(payload);
   const [experienceMode, setExperienceMode] =
     useState<ExperienceMode>("beginner");
   const [viewMode, setViewMode] = useState<ViewMode>("2d");
@@ -76,10 +118,19 @@ export default function App({ safeMode = false }: AppProps) {
   );
   const [selectedNode, setSelectedNode] = useState<VisualNode | null>(null);
   const [showCode, setShowCode] = useState(false);
+  const [editorRevealLine, setEditorRevealLine] = useState<number | null>(null);
+  const [editorRevealKey, setEditorRevealKey] = useState(0);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [navigationMode, setNavigationMode] =
+    useState<NavigationSearchMode>("files");
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [sidebarView, setSidebarView] = useState<SidebarView>("explorer");
+  const [gitRefreshKey, setGitRefreshKey] = useState(0);
   const [openingProject, setOpeningProject] = useState(false);
+  const [projectLoadProgress, setProjectLoadProgress] =
+    useState<ProjectLoadProgress | null>(null);
   const [notice, setNotice] = useState<string | null>(
     safeMode
       ? "Divex recovered in safe mode. The 2D map and large-project protection are active."
@@ -96,6 +147,28 @@ export default function App({ safeMode = false }: AppProps) {
   const [paneWidths, setPaneWidths] = useState(() =>
     defaultPaneWidths(window.innerWidth),
   );
+  const navigationHistory = useNavigationHistory<NavigationSnapshot>(
+    navigationSnapshotKey,
+  );
+
+  useEffect(() => {
+    if (!window.divex) return;
+    return window.divex.onProjectLoadProgress(setProjectLoadProgress);
+  }, []);
+
+  useEffect(() => {
+    if (analysisError) {
+      setNotice(`Project analysis stopped safely: ${analysisError}`);
+    }
+  }, [analysisError]);
+
+  useEffect(() => {
+    if (!isAnalyzing) setProjectLoadProgress(null);
+  }, [isAnalyzing]);
+
+  useEffect(() => {
+    setGitRefreshKey((current) => current + 1);
+  }, [payload.files, payload.rootPath]);
 
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -185,6 +258,11 @@ export default function App({ safeMode = false }: AppProps) {
     setNotice(message);
     window.setTimeout(() => setNotice(null), duration);
   };
+  const terminal = useIntegratedTerminal({
+    rootPath: payload.rootPath,
+    enabled: projectIsLocal && Boolean(window.divex),
+    onNotice: showTransientNotice,
+  });
 
   const resetWorkspace = (
     nextProject: ProjectPayload,
@@ -205,6 +283,9 @@ export default function App({ safeMode = false }: AppProps) {
     setLogicPositions({});
     setSelectedNode(null);
     setShowCode(false);
+    setEditorRevealLine(null);
+    setEditorRevealKey((current) => current + 1);
+    navigationHistory.reset();
     setProjectIsLocal(isLocalProject);
   };
 
@@ -226,40 +307,106 @@ export default function App({ safeMode = false }: AppProps) {
     });
   };
 
+  const applyNavigationSnapshot = useCallback(
+    (snapshot: NavigationSnapshot) => {
+      if (snapshot.node?.path) {
+        const ancestorIds = folderIdsForPath(snapshot.node.path);
+        setExpandedFolders((current) => {
+          const next = new Set(current);
+          ancestorIds.forEach((id) => next.add(id));
+          return next;
+        });
+      }
+      setSelectedNode(snapshot.node);
+      setViewMode(snapshot.viewMode);
+      setShowCode(snapshot.showCode);
+      setEditorRevealLine(snapshot.line);
+      setEditorRevealKey((current) => current + 1);
+    },
+    [],
+  );
+
+  const visitNavigationSnapshot = useCallback(
+    (snapshot: NavigationSnapshot) => {
+      navigationHistory.visit(snapshot);
+      applyNavigationSnapshot(snapshot);
+    },
+    [applyNavigationSnapshot, navigationHistory],
+  );
+
   const selectFile = (file: AnalyzedFile) => {
-    const ancestorIds = folderIdsForPath(file.path);
-    setExpandedFolders((current) => {
-      const next = new Set(current);
-      ancestorIds.forEach((id) => next.add(id));
-      return next;
+    visitNavigationSnapshot({
+      node: {
+        id: file.id,
+        label: file.name,
+        subtitle: `${file.symbols.length} symbols · ${file.lineCount} lines`,
+        kind: "file",
+        path: file.path,
+        position: [0, 0, 0],
+      },
+      showCode,
+      line: showCode ? 1 : null,
+      viewMode,
     });
-    setSelectedNode({
-      id: file.id,
-      label: file.name,
-      subtitle: `${file.symbols.length} symbols · ${file.lineCount} lines`,
-      kind: "file",
-      path: file.path,
-      position: [0, 0, 0],
-    });
-    setShowCode(false);
   };
 
   const selectFolder = (folder: FolderNode) => {
-    setSelectedNode({
-      id: folder.id,
-      label: folder.name,
-      subtitle: `${folder.folders.length + folder.files.length} direct items`,
-      kind: "folder",
-      path: folder.path,
-      position: [0, 0, 0],
+    visitNavigationSnapshot({
+      node: {
+        id: folder.id,
+        label: folder.name,
+        subtitle: `${folder.folders.length + folder.files.length} direct items`,
+        kind: "folder",
+        path: folder.path,
+        position: [0, 0, 0],
+      },
+      showCode: false,
+      line: null,
+      viewMode,
     });
-    setShowCode(false);
   };
 
   const selectPath = (path: string) => {
     const file = project.files.find((item) => item.path === path);
     if (file) selectFile(file);
   };
+
+  const openNavigationTarget = useCallback(
+    (target: NavigationTarget) => {
+      const file = project.files.find((item) => item.path === target.path);
+      if (!file) {
+        showTransientNotice("That project location is no longer available.");
+        return;
+      }
+      const symbol = target.symbolId
+        ? file.symbols.find((item) => item.id === target.symbolId)
+        : undefined;
+      visitNavigationSnapshot({
+        node: symbol
+          ? {
+              id: symbol.id,
+              label: symbol.name,
+              subtitle: `${symbol.kind} · line ${symbol.line}`,
+              kind: symbol.kind,
+              path: file.path,
+              parentId: symbol.parentSymbolId ?? file.id,
+              position: [0, 0, 0],
+            }
+          : {
+              id: file.id,
+              label: file.name,
+              subtitle: `${file.symbols.length} symbols · ${file.lineCount} lines`,
+              kind: "file",
+              path: file.path,
+              position: [0, 0, 0],
+            },
+        showCode: true,
+        line: Math.max(1, target.line),
+        viewMode,
+      });
+    },
+    [project.files, showTransientNotice, viewMode, visitNavigationSnapshot],
+  );
 
   const persistFileContent = (path: string, content: string) => {
     setPayload((current) => ({
@@ -282,9 +429,26 @@ export default function App({ safeMode = false }: AppProps) {
     }
 
     setOpeningProject(true);
+    setProjectLoadProgress({
+      phase: "scanning",
+      completed: 0,
+      total: 0,
+      message: "Preparing project scan…",
+    });
     try {
       const nextProject = await window.divex.chooseProject();
-      if (nextProject) resetWorkspace(nextProject, true);
+      if (nextProject) {
+        resetWorkspace(nextProject, true);
+        if (nextProject.loadSummary) {
+          const { totalFiles, cachedFiles, durationMs } =
+            nextProject.loadSummary;
+          showTransientNotice(
+            `Loaded ${totalFiles} files in ${durationMs} ms${
+              cachedFiles > 0 ? ` · reused ${cachedFiles}` : ""
+            }.`,
+          );
+        }
+      }
     } catch (error) {
       showTransientNotice(
         error instanceof Error
@@ -295,6 +459,19 @@ export default function App({ safeMode = false }: AppProps) {
     } finally {
       setOpeningProject(false);
     }
+  };
+
+  const openMiniWindow = async () => {
+    if (!projectIsLocal || !window.divex) {
+      showTransientNotice(
+        "Open a local project before launching Divex Mini.",
+      );
+      return;
+    }
+    const result = await window.divex.openMiniWindow({
+      rootPath: payload.rootPath,
+    });
+    showTransientNotice(result.output);
   };
 
   const renameExplorerEntry = async (
@@ -426,13 +603,24 @@ export default function App({ safeMode = false }: AppProps) {
       showTransientNotice("Demo project restored.");
       return;
     }
-    const result = await window.divex.refreshProject({
-      rootPath: payload.rootPath,
+    setOpeningProject(true);
+    setProjectLoadProgress({
+      phase: "scanning",
+      completed: 0,
+      total: 0,
+      message: "Checking project changes…",
     });
-    if (result.success && result.project) {
-      resetWorkspace(result.project, true);
+    try {
+      const result = await window.divex.refreshProject({
+        rootPath: payload.rootPath,
+      });
+      if (result.success && result.project) {
+        resetWorkspace(result.project, true);
+      }
+      showTransientNotice(result.output, result.success ? 3500 : 4500);
+    } finally {
+      setOpeningProject(false);
     }
-    showTransientNotice(result.output, result.success ? 3500 : 4500);
   };
 
   const openExplorerEntry = async (entry: ExplorerEntry) => {
@@ -448,16 +636,11 @@ export default function App({ safeMode = false }: AppProps) {
   };
 
   const openExplorerTerminal = async (entry: ExplorerEntry) => {
-    if (!projectIsLocal || !window.divex) {
-      showTransientNotice("Open a local project to launch a terminal.");
-      return;
-    }
-    const result = await window.divex.openProjectTerminal({
-      rootPath: payload.rootPath,
-      entryPath: entry.path,
-      entryKind: entry.kind,
-    });
-    if (!result.success) showTransientNotice(result.output, 4500);
+    const directory =
+      entry.kind === "folder"
+        ? entry.path
+        : entry.path.split("/").slice(0, -1).join("/");
+    await terminal.createShell(directory || undefined);
   };
 
   const shareExplorerEntry = async (entry: ExplorerEntry) => {
@@ -582,7 +765,7 @@ export default function App({ safeMode = false }: AppProps) {
     );
   };
 
-  const openProjectTerminal = async () => {
+  const openExternalTerminal = async () => {
     if (!projectIsLocal || !window.divex) {
       showTransientNotice("Open a local project to launch a terminal.");
       return;
@@ -594,12 +777,7 @@ export default function App({ safeMode = false }: AppProps) {
   };
 
   const runProjectTask = async (taskId: string) => {
-    if (!projectIsLocal || !window.divex) return;
-    const result = await window.divex.runProjectTask({
-      rootPath: payload.rootPath,
-      taskId,
-    });
-    showTransientNotice(result.output, result.success ? 3500 : 4500);
+    await terminal.runTask(taskId);
   };
 
   const runBuildTask = () => {
@@ -608,12 +786,8 @@ export default function App({ safeMode = false }: AppProps) {
   };
 
   const runActiveFile = async () => {
-    if (!projectIsLocal || !window.divex || !selectedFile) return;
-    const result = await window.divex.runProjectFile({
-      rootPath: payload.rootPath,
-      entryPath: selectedFile.path,
-    });
-    showTransientNotice(result.output, result.success ? 3500 : 4500);
+    if (!selectedFile) return;
+    await terminal.runFile(selectedFile.path);
   };
 
   const changeView = (mode: ViewMode) => {
@@ -632,9 +806,258 @@ export default function App({ safeMode = false }: AppProps) {
   };
 
   const handleSelectNode = (node: VisualNode) => {
-    setSelectedNode(node);
-    setShowCode(false);
+    visitNavigationSnapshot({
+      node,
+      showCode: false,
+      line: null,
+      viewMode,
+    });
   };
+
+  const openNavigation = useCallback((mode: NavigationSearchMode) => {
+    setNavigationMode(mode);
+    setNavigationOpen(true);
+    setFileMenuOpen(false);
+    setTerminalMenuOpen(false);
+    setProjectMenuOpen(false);
+  }, []);
+
+  const openSelectedSource = useCallback(() => {
+    if (!selectedNode || !selectedFile) return;
+    const symbol = selectedFile.symbols.find(
+      (candidate) => candidate.id === selectedNode.id,
+    );
+    visitNavigationSnapshot({
+      node: selectedNode,
+      showCode: true,
+      line: symbol?.line ?? 1,
+      viewMode,
+    });
+  }, [
+    selectedFile,
+    selectedNode,
+    viewMode,
+    visitNavigationSnapshot,
+  ]);
+
+  const closeSelectedSource = useCallback(() => {
+    visitNavigationSnapshot({
+      node: selectedNode,
+      showCode: false,
+      line: null,
+      viewMode,
+    });
+  }, [selectedNode, viewMode, visitNavigationSnapshot]);
+
+  const goBack = useCallback(() => {
+    const location = navigationHistory.back();
+    if (location) applyNavigationSnapshot(location);
+  }, [applyNavigationSnapshot, navigationHistory]);
+
+  const goForward = useCallback(() => {
+    const location = navigationHistory.forward();
+    if (location) applyNavigationSnapshot(location);
+  }, [applyNavigationSnapshot, navigationHistory]);
+
+  const selectedDefinition = definitionTarget(
+    project,
+    selectedNode?.id ?? null,
+  );
+  const navigationCommands: NavigationCommand[] = [
+    {
+      id: "navigation.quick-open",
+      title: "Quick Open File",
+      description: "Find a project file by name or path",
+      shortcut: "⌘P",
+      keywords: "search files navigation",
+      run: () => openNavigation("files"),
+    },
+    {
+      id: "navigation.symbols",
+      title: "Go to Symbol",
+      description: "Find a class, function, method, or widget",
+      shortcut: "⇧⌘O",
+      keywords: "symbols outline function class",
+      run: () => openNavigation("symbols"),
+    },
+    {
+      id: "navigation.text",
+      title: "Search Workspace Text",
+      description: "Search inside every loaded source file",
+      shortcut: "⇧⌘F",
+      keywords: "find text workspace",
+      run: () => openNavigation("text"),
+    },
+    {
+      id: "navigation.definition",
+      title: "Go to Selected Definition",
+      description: "Open the selected file or symbol at its definition",
+      disabled: !selectedDefinition,
+      keywords: "definition source line",
+      run: () => {
+        if (selectedDefinition) openNavigationTarget(selectedDefinition);
+      },
+    },
+    {
+      id: "navigation.references",
+      title: "Find References to Selection",
+      description: "List code that imports, calls, creates, or uses it",
+      disabled: !selectedNode,
+      keywords: "references usages incoming callers",
+      run: () => openNavigation("references"),
+    },
+    {
+      id: "view.project-map",
+      title: "Show 2D Project Map",
+      description: "Open the expandable folder and file structure",
+      keywords: "view structure map",
+      run: () => changeView("2d"),
+    },
+    {
+      id: "view.logic-map",
+      title: "Show Logic Map",
+      description: "Open calls, creation, inheritance, and imports",
+      keywords: "view relationships workflow",
+      run: () => changeView("logic"),
+    },
+    {
+      id: "view.source-control",
+      title: "Show Source Control",
+      description: "Review, stage, and commit local Git changes",
+      shortcut: "⌃⇧G",
+      disabled: !projectIsLocal,
+      keywords: "git source control changes commit stage",
+      run: () => setSidebarView("source-control"),
+    },
+    {
+      id: "view.source",
+      title: showCode ? "Close Source Editor" : "View Selected Source",
+      description: showCode
+        ? "Return to the active visual map"
+        : "Open the selected file at its current symbol",
+      disabled: !selectedFile,
+      keywords: "editor code source",
+      run: showCode ? closeSelectedSource : openSelectedSource,
+    },
+    {
+      id: "project.refresh",
+      title: "Refresh Project",
+      description: "Scan changed files and rebuild project analysis",
+      keywords: "reload rescan",
+      run: () => void refreshExplorer(),
+    },
+    {
+      id: "project.open-folder",
+      title: "Open Folder…",
+      description: "Choose another project from this computer",
+      keywords: "workspace project",
+      run: () => void openProject(),
+    },
+    {
+      id: "terminal.toggle",
+      title: terminal.open ? "Hide Integrated Terminal" : "Show Integrated Terminal",
+      description: "Toggle the docked project terminal",
+      shortcut: "⌃`",
+      disabled: !projectIsLocal,
+      keywords: "terminal shell console panel",
+      run: () =>
+        terminal.open ? terminal.setOpen(false) : terminal.show(),
+    },
+    {
+      id: "terminal.new",
+      title: "New Integrated Terminal",
+      description: "Start another interactive shell in this project",
+      disabled: !projectIsLocal,
+      keywords: "terminal shell session",
+      run: () => void terminal.createShell(),
+    },
+    {
+      id: "terminal.terminate",
+      title: "Terminate Active Terminal",
+      description: "Stop and close the selected terminal session",
+      disabled: !terminal.activeSession,
+      keywords: "terminal stop kill task",
+      run: () => {
+        if (terminal.activeSession) {
+          void terminal.closeSession(terminal.activeSession.id);
+        }
+      },
+    },
+    {
+      id: "mode.guided",
+      title: "Use Guided Mode",
+      description: "Show simpler beginner-friendly explanations",
+      keywords: "beginner simple",
+      run: () => setExperienceMode("beginner"),
+    },
+    {
+      id: "mode.advanced",
+      title: "Use Advanced Mode",
+      description: "Show professional relationship details",
+      keywords: "senior professional",
+      run: () => setExperienceMode("advanced"),
+    },
+    {
+      id: "layout.free-positioning",
+      title: freePositioning
+        ? "Disable Free Positioning"
+        : "Enable Free Positioning",
+      description: "Allow workflow cards to be dragged manually",
+      keywords: "layout drag cards",
+      run: toggleFreePositioning,
+    },
+  ];
+
+  useEffect(() => {
+    const handleNavigationShortcut = (event: KeyboardEvent) => {
+      const commandKey = event.metaKey || event.ctrlKey;
+      if (event.ctrlKey && event.key === "`") {
+        event.preventDefault();
+        if (terminal.open) terminal.setOpen(false);
+        else terminal.show();
+      } else if (
+        commandKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "b"
+      ) {
+        event.preventDefault();
+        runBuildTask();
+      } else if (commandKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        openNavigation(event.shiftKey ? "commands" : "files");
+      } else if (
+        commandKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "o"
+      ) {
+        event.preventDefault();
+        openNavigation("symbols");
+      } else if (
+        commandKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "f"
+      ) {
+        event.preventDefault();
+        openNavigation("text");
+      } else if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "g"
+      ) {
+        event.preventDefault();
+        setSidebarView("source-control");
+      } else if (event.altKey && event.key === "ArrowLeft") {
+        event.preventDefault();
+        goBack();
+      } else if (event.altKey && event.key === "ArrowRight") {
+        event.preventDefault();
+        goForward();
+      }
+    };
+    window.addEventListener("keydown", handleNavigationShortcut);
+    return () =>
+      window.removeEventListener("keydown", handleNavigationShortcut);
+  }, [goBack, goForward, openNavigation, terminal]);
 
   return (
     <main className="app-shell">
@@ -642,7 +1065,13 @@ export default function App({ safeMode = false }: AppProps) {
         fileMenuOpen={fileMenuOpen}
         terminalMenuOpen={terminalMenuOpen}
         terminalEnabled={projectIsLocal && Boolean(window.divex)}
+        miniEnabled={projectIsLocal && Boolean(window.divex)}
         tasks={projectTasks}
+        hasTerminalSessions={terminal.sessions.length > 0}
+        hasActiveTerminal={Boolean(terminal.activeSession)}
+        activeTerminalRunning={terminal.activeSession?.status === "running"}
+        canGoBack={navigationHistory.canGoBack}
+        canGoForward={navigationHistory.canGoForward}
         canRunActiveFile={
           projectIsLocal &&
           Boolean(
@@ -664,10 +1093,22 @@ export default function App({ safeMode = false }: AppProps) {
           setTerminalMenuOpen(false);
         }}
         onOpenProject={openProject}
-        onNewTerminal={() => void openProjectTerminal()}
+        onOpenMini={() => void openMiniWindow()}
+        onNewTerminal={() => void terminal.createShell()}
+        onOpenExternalTerminal={() => void openExternalTerminal()}
+        onShowTerminal={terminal.show}
+        onRestartTerminal={() => void terminal.restartActive()}
+        onTerminateTerminal={() => {
+          if (terminal.activeSession) {
+            void terminal.closeSession(terminal.activeSession.id);
+          }
+        }}
         onRunTask={(taskId) => void runProjectTask(taskId)}
         onRunBuildTask={runBuildTask}
         onRunActiveFile={() => void runActiveFile()}
+        onGoBack={goBack}
+        onGoForward={goForward}
+        onOpenQuickSearch={() => openNavigation("files")}
       />
 
       <div
@@ -682,6 +1123,7 @@ export default function App({ safeMode = false }: AppProps) {
       >
         <ProjectSidebar
           project={project}
+          activeView={sidebarView}
           selectedId={selectedNode?.id ?? null}
           canUseNativePaths={projectIsLocal && Boolean(window.divex)}
           canShare={
@@ -690,6 +1132,8 @@ export default function App({ safeMode = false }: AppProps) {
           }
           hasClipboard={Boolean(explorerClipboard)}
           projectMenuOpen={projectMenuOpen}
+          gitRefreshKey={gitRefreshKey}
+          onChangeView={setSidebarView}
           onToggleProjectMenu={() =>
             setProjectMenuOpen((value) => !value)
           }
@@ -715,6 +1159,9 @@ export default function App({ safeMode = false }: AppProps) {
           onCutEntry={(entry) => stageExplorerEntry(entry, "cut")}
           onCopyEntry={(entry) => stageExplorerEntry(entry, "copy")}
           onPasteEntry={(entry) => void pasteExplorerEntry(entry)}
+          onOpenGitFile={(path) =>
+            openNavigationTarget({ kind: "file", path, line: 1 })
+          }
         />
 
         <WorkspaceResizer
@@ -743,6 +1190,8 @@ export default function App({ safeMode = false }: AppProps) {
           viewMode={viewMode}
           experienceMode={experienceMode}
           showCode={showCode}
+          editorRevealLine={editorRevealLine}
+          editorRevealKey={editorRevealKey}
           twoDZoom={twoDZoom}
           logicZoom={logicZoom}
           workflowDirection={workflowDirection}
@@ -762,7 +1211,10 @@ export default function App({ safeMode = false }: AppProps) {
           onFullscreenError={(message) => {
             showTransientNotice(message);
           }}
-          onShowVisualizer={() => setShowCode(false)}
+          onShowVisualizer={closeSelectedSource}
+          onOpenEditorFile={(path) =>
+            openNavigationTarget({ kind: "file", path, line: 1 })
+          }
           onSelectNode={handleSelectNode}
           onToggleFolderFreely={toggleFolderFreely}
           onToggleFileFreely={toggleFileFreely}
@@ -797,21 +1249,102 @@ export default function App({ safeMode = false }: AppProps) {
           selectedNode={selectedNode}
           selectedFile={selectedFile}
           showCode={showCode}
-          onToggleCode={() => setShowCode((value) => !value)}
+          onToggleCode={
+            showCode ? closeSelectedSource : openSelectedSource
+          }
           onClose={() => {
-            setSelectedNode(null);
-            setShowCode(false);
+            visitNavigationSnapshot({
+              node: null,
+              showCode: false,
+              line: null,
+              viewMode,
+            });
           }}
           onSelectPath={selectPath}
           onSelectNode={handleSelectNode}
         />
       </div>
 
-      {openingProject && (
+      {(terminal.open || terminal.sessions.length > 0) && (
+        <Suspense
+          fallback={
+            <div className="terminal-loading">
+              Loading integrated terminal…
+            </div>
+          }
+        >
+          <TerminalDock
+            manager={terminal}
+            tasks={projectTasks}
+            onOpenExternal={() => void openExternalTerminal()}
+          />
+        </Suspense>
+      )}
+
+      <NavigationPalette
+        open={navigationOpen}
+        mode={navigationMode}
+        project={project}
+        referenceNodeId={selectedNode?.id ?? null}
+        commands={navigationCommands}
+        onModeChange={setNavigationMode}
+        onNavigate={openNavigationTarget}
+        onClose={() => setNavigationOpen(false)}
+      />
+
+      {(openingProject || isAnalyzing) && (
         <div className="loading-overlay">
           <div className="loader" />
-          <strong>Analyzing project…</strong>
-          <span>Mapping files, symbols, and imports</span>
+          <strong>
+            {isAnalyzing
+              ? "Analyzing project in the background…"
+              : projectLoadProgress?.message ?? "Loading project…"}
+          </strong>
+          <span>
+            {isAnalyzing
+              ? "Mapping files, symbols, imports, and logical relationships"
+              : projectLoadProgress?.total
+                ? `${projectLoadProgress.completed} of ${projectLoadProgress.total}`
+                : "Discovering supported project files"}
+          </span>
+          {!isAnalyzing &&
+            Boolean(projectLoadProgress?.total) && (
+              <div className="loading-progress" aria-hidden="true">
+                <i
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      (projectLoadProgress!.completed /
+                        projectLoadProgress!.total) *
+                        100,
+                    )}%`,
+                  }}
+                />
+              </div>
+            )}
+        </div>
+      )}
+      {analysisError && !isAnalyzing && (
+        <div className="loading-overlay project-analysis-error">
+          <strong>Project analysis stopped safely</strong>
+          <span>{analysisError}</span>
+          <div>
+            <button type="button" onClick={retryAnalysis}>
+              Retry analysis
+            </button>
+            <button type="button" onClick={() => void openProject()}>
+              Open another folder
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                resetWorkspace(sampleProject);
+                retryAnalysis();
+              }}
+            >
+              Load demo project
+            </button>
+          </div>
         </div>
       )}
       {notice && <div className="toast">{notice}</div>}

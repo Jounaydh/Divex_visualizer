@@ -36,10 +36,15 @@ Commands:
 .
 ├── electron/
 │   ├── main.cjs                    Native window, project files, tasks, IPC
+│   ├── git-service.cjs             Constrained local Git operations
+│   ├── project-loader.cjs          Cached metadata-first project loading
+│   ├── terminal-service.cjs        Managed pseudoterminal sessions
 │   └── preload.cjs                 Safe window.divex API
 ├── src/
 │   ├── analysis/
+│   │   ├── analysis.worker.ts      Background analysis entry point
 │   │   ├── analyzeProject.ts       Shared analysis pipeline
+│   │   ├── useAnalyzedProject.ts   Worker lifecycle and cancellation
 │   │   └── languages/dart.ts       Dart and Flutter extraction
 │   ├── app/
 │   │   ├── AppHeader.tsx
@@ -55,9 +60,20 @@ Commands:
 │   │   ├── FeatureErrorBoundary.tsx
 │   │   └── WorkflowNode.tsx
 │   ├── features/
-│   │   ├── editor/CodeEditor.tsx
+│   │   ├── editor/
+│   │   │   ├── CodeEditor.tsx
+│   │   │   └── flutterDiagnostics.ts
 │   │   ├── explorer/FileExplorer.tsx
 │   │   ├── inspector/InspectorPanel.tsx
+│   │   ├── navigation/
+│   │   │   ├── NavigationPalette.tsx
+│   │   │   ├── navigationIndex.ts
+│   │   │   └── useNavigationHistory.ts
+│   │   ├── source-control/
+│   │   │   └── SourceControlPanel.tsx
+│   │   ├── terminal/
+│   │   │   ├── TerminalDock.tsx
+│   │   │   └── useIntegratedTerminal.ts
 │   │   ├── logic-map/
 │   │   │   ├── LogicalFilterPanel.tsx
 │   │   │   ├── LogicalWorkflowVisualizer.tsx
@@ -86,6 +102,8 @@ Commands:
 | Header, sidebar, view toolbar, or workspace composition | `src/app/` |
 | Dart extraction | `src/analysis/languages/dart.ts` |
 | Analysis orchestration or extension recognition | `src/analysis/analyzeProject.ts` |
+| Scan limits, file caching, or read concurrency | `electron/project-loader.cjs` |
+| Analysis worker lifecycle | `src/analysis/useAnalyzedProject.ts` |
 | Project graph meaning | `src/features/project-map/buildVisualGraph.ts` |
 | Project graph layout/routes | `src/features/project-map/twoDLayout.ts` |
 | Project map interaction/rendering | `src/features/project-map/TwoDVisualizer.tsx` |
@@ -94,13 +112,40 @@ Commands:
 | Large-map limits/scoping | `src/features/logic-map/logicalWorkflowPerformance.ts` |
 | Logical controls | `src/features/logic-map/LogicalFilterPanel.tsx` |
 | Logical viewport/rendering | `src/features/logic-map/LogicalWorkflowVisualizer.tsx` |
-| Editor behavior | `src/features/editor/CodeEditor.tsx` |
+| Editor sessions, tabs, actions, and preferences | `src/features/editor/CodeEditor.tsx` |
+| Flutter analyzer output parsing | `src/features/editor/flutterDiagnostics.ts` |
+| Search results, definitions, or references | `src/features/navigation/navigationIndex.ts` |
+| Command palette UI | `src/features/navigation/NavigationPalette.tsx` |
+| Back/forward behavior | `src/features/navigation/useNavigationHistory.ts` |
+| Git status, diff, staging, or commits | `electron/git-service.cjs` |
+| Source Control UI | `src/features/source-control/SourceControlPanel.tsx` |
+| PTY lifecycle, ownership, or limits | `electron/terminal-service.cjs` |
+| Terminal sessions and streamed output | `src/features/terminal/useIntegratedTerminal.ts` |
+| Xterm dock, tabs, resize, or task picker | `src/features/terminal/TerminalDock.tsx` |
+| Detected task definitions | `detectProjectTasks` in `electron/main.cjs` |
 | Native filesystem/process behavior | `electron/main.cjs` |
 | Safe renderer API | `electron/preload.cjs` and `src/types.ts` |
 | Visual styling | `src/styles.css` |
 
 Feature-specific code belongs in its feature folder. Only move an element into
 `src/components/` when more than one feature genuinely uses it.
+
+Git changes must use fixed `execFile` argument arrays in `git-service.cjs`.
+Never accept a raw Git command or shell fragment from the renderer. Validate
+all file paths against the opened project and keep destructive operations out
+of the renderer bridge unless they receive a dedicated recovery design.
+
+Terminal task execution follows the same rule: the renderer sends a detected
+task ID, and Electron resolves that ID to a trusted executable/argument array.
+Do not add a renderer IPC that accepts an arbitrary command string. The
+`postinstall` script fixes execute permission on node-pty's prebuilt macOS
+helper; keep it when changing package tooling.
+
+Ace sessions are document state, not disposable render details. When adding
+editor features, preserve the rule that switching tabs calls `setSession`
+instead of replacing text. Programmatic formatter/project updates must suppress
+dirty tracking, and dirty buffers must not be overwritten by background
+analysis refreshes.
 
 ## Adding a language analyzer
 
@@ -156,6 +201,29 @@ contents, secrets, or environment variables in a report.
   project.
 - Large-map thresholds and budgets have one source of truth in
   `logicalWorkflowPerformance.ts`.
+
+## Project-loading conventions
+
+- Directory walking gathers candidates before source reads begin.
+- Do not follow symbolic links during project scans.
+- Keep filesystem concurrency bounded; increasing it may hurt slower disks.
+- Cache validation uses relative path, byte size, and modification time.
+- The cache is an optimization only and must never be the source of truth.
+- Worker responses must include their request ID, and stale workers must be
+  terminated during effect cleanup.
+- React should continue rendering the previous valid graph until the newest
+  analysis completes or the loading overlay is shown.
+
+## Navigation conventions
+
+- Search/index functions remain pure and return paths and one-based lines.
+- A result may include a symbol ID, but the path and line remain the reliable
+  editor destination.
+- Commands execute application actions; they do not duplicate those actions.
+- Back/forward applies stored locations without adding new history entries.
+- Workspace text search operates only on files already present in the current
+  analyzed project.
+- Keep navigation result counts bounded before adding richer previews.
 
 ## Build strategy
 

@@ -5,6 +5,18 @@ yet use formal releases.
 
 ## Unreleased
 
+### Divex Mini companion
+
+- Added a separate compact renderer containing only the 2D and Logic maps.
+- Added debounced live-on-save project watching with cached changed-file reads
+  and background relationship analysis.
+- Added compact file/symbol search, pause/resume, always-on-top, external file
+  opening, update status, and changed-path feedback.
+- Kept the View menu with direction, free-positioning, and reset controls in
+  the compact window.
+- Persisted Mini window bounds, pin state, selected map, and live preference.
+- Added a File-menu launcher and project-watcher filtering/debounce tests.
+
 ### Product foundation
 
 - Created the Divex desktop workspace with an Apple-like grayscale interface.
@@ -72,3 +84,71 @@ yet use formal releases.
 - Added unresponsive-renderer recovery choices.
 - Added slow logic-map operation warnings in development.
 - Added Vitest and Testing Library with initial containment tests.
+
+### Project loading
+
+- Split project loading into a dedicated Electron module.
+- Added metadata-first discovery and bounded parallel metadata/content work.
+- Added a three-project LRU source-content cache.
+- Changed refreshes to reread only new or modified supported files.
+- Added live scanning and reading progress through the preload bridge.
+- Moved project analysis to a cancelable Web Worker.
+- Added safe retry behavior that preserves the last valid analyzed graph.
+- Added loader tests for ignored folders, progress, cache reuse, and changed
+  files.
+- Verified Kader loading with 194 supported files, zero rereads on cached
+  refresh, and 5,708 relationships analyzed in the background worker.
+
+### IDE navigation
+
+- Added a unified project navigation and command palette.
+- Added fuzzy file and symbol lookup plus workspace text search.
+- Added selected-definition and incoming-reference navigation.
+- Added exact-line source reveal in the Ace editor.
+- Added title-bar back and forward controls with bounded location history.
+- Added keyboard shortcuts for files, commands, symbols, text, and history.
+- Added navigation index and history tests.
+
+### Git source control
+
+- Added a Source Control sidebar with branch and upstream status.
+- Added staged, working, untracked, and conflict-aware change lists.
+- Added bounded staged/working diff previews and editor file opening.
+- Added per-file and all-file stage/unstage actions.
+- Added commit-message validation and commits for staged changes.
+- Added a constrained Electron Git service with root/path validation, fixed
+  argument arrays, command limits, and structured errors.
+- Added Git parsing, containment, diff, staging, and unstaging tests.
+
+### Integrated terminal and tasks
+
+- Added a lazy Xterm.js dock backed by owned node-pty sessions.
+- Added multiple shell, task, and active-file terminal tabs.
+- Added direct streamed output, ANSI rendering, interactive input, scrollback,
+  fitting, and resizable panel height.
+- Added task selection, build shortcut, restart, terminate, close-all, and exit
+  status controls.
+- Routed detected tasks and supported active files into the integrated terminal
+  while preserving an external-terminal fallback.
+- Added strict project-directory containment, input/session limits, renderer
+  ownership, and automatic session cleanup.
+- Added terminal service tests and native runtime validation.
+- Added a clean-install helper for node-pty's macOS spawn-helper permission.
+
+### Editor workspace upgrade
+
+- Replaced the single replaceable editor buffer with persistent per-file Ace
+  EditSessions.
+- Added multi-file tabs with independent buffers, undo, cursor, and scroll
+  state.
+- Preserved editor sessions while moving between source view and visual maps.
+- Added dirty indicators, save-all, before-unload protection, and a safe dirty
+  tab close dialog.
+- Added undo, redo, find, replace, breadcrumbs, current-symbol context, and a
+  navigable file outline.
+- Added font size, word-wrap, whitespace, and tab-size preferences.
+- Kept Explorer file selection inside the editor while source view is active.
+- Added Flutter analyzer diagnostic parsing, gutter annotations, problem
+  counts, and parser tests.
+- Fixed destroyed Ace session reuse exposed by React development lifecycle
+  verification.

@@ -8,16 +8,26 @@ keeps each major user feature in its own directory.
 
 ```mermaid
 flowchart LR
-  FS["Local project"] --> MAIN["Electron main process"]
+  FS["Local project"] --> LOADER["Metadata-first cached loader"]
+  FS --> WATCH["Debounced project watcher"]
+  FS --> GIT["Constrained Git service"]
+  LOADER --> MAIN["Electron main process"]
+  WATCH --> MAIN
+  GIT --> MAIN
   MAIN --> IPC["Validated preload API"]
   IPC --> APP["React application state"]
-  APP --> ANALYSIS["Project analysis"]
+  APP --> WORKER["Cancelable analysis worker"]
+  WORKER --> ANALYSIS["Project analysis"]
   ANALYSIS --> MODEL["Shared analyzed project"]
   MODEL --> PMAP["Project map"]
   MODEL --> LMAP["Logical workflow map"]
   MODEL --> INSPECT["Inspector"]
+  MODEL --> MINI["Mini companion maps"]
   APP --> EDITOR["Lazy source editor"]
   EDITOR --> IPC
+  APP --> XTERM["Lazy Xterm dock"]
+  XTERM --> IPC
+  IPC --> PTY["Managed node-pty sessions"]
 ```
 
 ## Directory ownership
@@ -25,11 +35,21 @@ flowchart LR
 ```text
 electron/
 ├── main.cjs       Native folder scan, file mutations, tasks, and commands
+├── git-service.cjs
+│                   Status, diffs, staging, and commits using fixed arguments
+├── project-loader.cjs
+│                   Metadata scan, bounded reads, and content cache
+├── project-watcher.cjs
+│                   Debounced supported-file change notifications
+├── terminal-service.cjs
+│                   Owned PTY sessions, input, resize, exit, and cleanup
 └── preload.cjs    Narrow window.divex bridge
 
 src/
 ├── analysis/
+│   ├── analysis.worker.ts
 │   ├── analyzeProject.ts
+│   ├── useAnalyzedProject.ts
 │   └── languages/dart.ts
 ├── app/           Header, sidebar, toolbar, workspace, and UI coordination
 ├── components/    Shared BrandMark and WorkflowNode components
@@ -38,9 +58,13 @@ src/
 │   ├── explorer/
 │   ├── inspector/
 │   ├── logic-map/
+│   ├── navigation/
+│   ├── source-control/
+│   ├── terminal/
 │   └── project-map/
 ├── config/
 ├── data/
+├── mini/          Lightweight map-only companion renderer
 ├── App.tsx
 ├── styles.css
 └── types.ts
@@ -62,6 +86,11 @@ relationships, but return language-neutral types from `src/types.ts`.
 Rendering code must not be added to a language adapter. Language-specific
 parsing conditions must not be added to map components.
 
+`useAnalyzedProject` sends changed payloads to `analysis.worker.ts`. Only the
+newest worker response may replace the active graph; effect cleanup terminates
+older workers. The initial built-in demonstration is analyzed synchronously
+because it is small and must exist for the first render.
+
 ### Project map feature
 
 - `buildVisualGraph.ts` creates folder, file, symbol, containment, and import
@@ -69,6 +98,19 @@ parsing conditions must not be added to map components.
 - `twoDLayout.ts` creates automatic positions and edge routes.
 - `TwoDVisualizer.tsx` manages expansion, viewport interaction, zoom, focus,
   rendering, and manual positions.
+
+### Mini companion renderer
+
+`src/main.tsx` selects `MiniApp` when the Electron URL contains
+`mode=mini`. The Mini renderer reuses the shared analysis hook and both map
+features without mounting the workbench, editor, inspector, terminal, or source
+control.
+
+`project-watcher.cjs` owns recursive filesystem watches in Electron. It ignores
+generated/dependency directories, filters unsupported files, combines bursts
+of edits into one event, and ties each watch to its requesting `webContents`.
+Mini sends those events through the cached loader; unchanged files remain in
+memory and only changed contents are read before background graph analysis.
 
 ### Logic map feature
 
@@ -90,6 +132,59 @@ These are isolated feature folders because each will grow into a larger IDE
 subsystem. The editor is dynamically imported; its Ace dependency is in a
 separate production chunk and is not required for map-only sessions.
 
+The editor owns one Ace `EditSession` per open path. A session retains its
+buffer and undo manager, while Divex stores its last cursor and scroll
+positions before activating another tab. Clean documents accept refreshed
+project contents; dirty documents retain their local buffer until saved or
+explicitly discarded.
+
+`VisualizerWorkspace` keeps the editor subtree mounted after its first use but
+hides it while a map is active. This preserves open sessions without loading
+Ace during map-only startup. `flutterDiagnostics.ts` is a pure parser that
+converts analyzer output into file/line diagnostics before the editor applies
+Ace annotations.
+
+### Navigation
+
+`navigationIndex.ts` contains pure file, symbol, text, definition, and reference
+lookup. `NavigationPalette.tsx` owns the modal search experience and command
+results. `useNavigationHistory.ts` stores a bounded linear history of map or
+editor locations.
+
+Navigation results resolve to a path, source line, and optional symbol ID.
+`App.tsx` converts that target into the shared selection model and increments an
+editor reveal key so choosing the same source line twice still refocuses Ace.
+Moving backward or forward applies a stored snapshot without creating another
+history entry.
+
+### Source control
+
+`electron/git-service.cjs` is the only layer that launches Git. It validates
+the opened root and every relative file path, uses `execFile` with argument
+arrays, limits command buffers and timeouts, and returns structured results.
+The renderer cannot submit arbitrary Git commands.
+
+`SourceControlPanel.tsx` owns repository status, commit input, staged/working
+groups, and bounded diff previews. It reaches the service through narrow
+preload methods and reuses `App.tsx` navigation to open changed source files.
+The initial surface intentionally excludes destructive discard/reset and
+network authentication.
+
+### Integrated terminal and tasks
+
+`terminal-service.cjs` owns every pseudoterminal in the Electron main process.
+The renderer may request a project shell, detected task ID, or supported active
+file; it cannot provide an arbitrary executable for task/file execution.
+Sessions are associated with the requesting `webContents`, capped per owner,
+and terminated when that owner is destroyed.
+
+`useIntegratedTerminal.ts` owns lightweight session metadata and routes output
+to per-session subscribers. Output is buffered only until Xterm attaches and is
+then written directly, avoiding React updates for every process chunk.
+`TerminalDock.tsx` owns Xterm instances, fitting, input, session tabs, task
+selection, and panel resizing. Both Xterm code and CSS are emitted as a lazy
+production chunk.
+
 ### Crash containment
 
 `FeatureErrorBoundary` surrounds the active editor or map and also surrounds
@@ -106,16 +201,28 @@ infinite crash/reload loop.
 
 ## Runtime data flow
 
-1. The Electron process validates and scans a selected root folder.
-2. The preload bridge returns a `ProjectPayload` containing supported text
-   files.
-3. `analyzeProject` builds the folder tree, files, symbols, resolved imports,
-   and semantic relationships.
-4. Both maps and the inspector read the same immutable analyzed model.
-5. Expansion and relationship filters derive temporary visual graphs without
+1. The Electron loader walks folders and collects supported-file paths.
+2. Metadata checks reject oversized or unavailable files.
+3. Unchanged contents are reused from the three-project LRU cache; changed
+   contents are read with bounded concurrency.
+4. The preload bridge returns the `ProjectPayload` and streams loading progress.
+5. A cancelable worker builds folders, symbols, resolved imports, and semantic
+   relationships.
+6. Both maps and the inspector read the same immutable analyzed model.
+7. Expansion and relationship filters derive temporary visual graphs without
    changing the analyzed model.
-6. Editing and desktop commands return through validated preload methods.
-7. A successful file save updates the renderer's current project payload.
+8. Editing and desktop commands return through validated preload methods.
+9. A successful file save updates the renderer's current project payload and
+   starts a new analysis worker.
+10. Source-control refreshes read repository metadata independently and never
+    modify the analyzed graph until a project file is saved or refreshed.
+11. Terminal input, output, resize, and exit events cross narrow IPC methods;
+    approved task definitions remain in Electron.
+12. Editor documents persist through tab and map changes; only successful
+    saves update the shared project payload and start another analysis worker.
+13. Divex Mini receives debounced supported-file changes, refreshes through the
+    cached loader, and replaces its analyzed map only after the latest worker
+    completes.
 
 ## Security boundary
 

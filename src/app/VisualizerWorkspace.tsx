@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import type {
   AnalyzedFile,
   AnalyzedProject,
@@ -32,6 +32,8 @@ interface VisualizerWorkspaceProps {
   viewMode: ViewMode;
   experienceMode: ExperienceMode;
   showCode: boolean;
+  editorRevealLine: number | null;
+  editorRevealKey: number;
   twoDZoom: number;
   logicZoom: number;
   workflowDirection: WorkflowDirection;
@@ -47,6 +49,7 @@ interface VisualizerWorkspaceProps {
   onResetTwoDPositions: () => void;
   onFullscreenError: (message: string) => void;
   onShowVisualizer: () => void;
+  onOpenEditorFile: (path: string) => void;
   onSelectNode: (node: VisualNode) => void;
   onToggleFolderFreely: (id: string) => void;
   onToggleFileFreely: (id: string) => void;
@@ -84,6 +87,8 @@ export function VisualizerWorkspace({
   viewMode,
   experienceMode,
   showCode,
+  editorRevealLine,
+  editorRevealKey,
   twoDZoom,
   logicZoom,
   workflowDirection,
@@ -99,6 +104,7 @@ export function VisualizerWorkspace({
   onResetTwoDPositions,
   onFullscreenError,
   onShowVisualizer,
+  onOpenEditorFile,
   onSelectNode,
   onToggleFolderFreely,
   onToggleFileFreely,
@@ -108,6 +114,17 @@ export function VisualizerWorkspace({
   onLogicPositionsChange,
   onPersistFile,
 }: VisualizerWorkspaceProps) {
+  const [editorFile, setEditorFile] = useState<AnalyzedFile | null>(null);
+  useEffect(() => {
+    if (showCode && selectedFile) setEditorFile(selectedFile);
+  }, [selectedFile, showCode]);
+  useEffect(() => {
+    if (!showCode) setEditorFile(null);
+    // A different project must never inherit open document sessions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.rootPath]);
+  const activeEditorFile =
+    showCode && selectedFile ? selectedFile : editorFile;
   const selectNode = (node: VisualNode) => onSelectNode(node);
   const { isFullscreen, toggleFullscreen } = useElementFullscreen();
   const handleToggleFullscreen = async () => {
@@ -210,43 +227,57 @@ export function VisualizerWorkspace({
               />
             }
           >
-            {showCode && selectedFile ? (
-              <CodeEditor
-                file={selectedFile}
-                projectName={project.name}
-                rootPath={project.rootPath}
-                onClose={onShowVisualizer}
-                onPersist={onPersistFile}
-              />
-            ) : viewMode === "logic" ? (
-              <LogicalWorkflowVisualizer
-                project={project}
-                selectedId={selectedId}
-                zoom={logicZoom}
-                direction={workflowDirection}
-                freePositioning={freePositioning}
-                customPositions={logicPositions}
-                onZoomChange={onLogicZoomChange}
-                onCustomPositionsChange={onLogicPositionsChange}
-                onSelectNode={selectNode}
-              />
-            ) : (
-              <TwoDVisualizer
-                project={project}
-                expandedFolders={expandedFolders}
-                expandedFiles={expandedFiles}
-                selectedId={selectedId}
-                zoom={twoDZoom}
-                direction={workflowDirection}
-                freePositioning={freePositioning}
-                customPositions={twoDPositions}
-                onZoomChange={onTwoDZoomChange}
-                onCustomPositionsChange={onTwoDPositionsChange}
-                onSelectNode={selectNode}
-                onToggleFolder={onToggleFolderFreely}
-                onToggleFile={onToggleFileFreely}
-              />
-            )}
+            <>
+              {activeEditorFile && (
+                <div
+                  className={`editor-preserved-layer ${
+                    showCode ? "active" : "hidden"
+                  }`}
+                >
+                  <CodeEditor
+                    file={activeEditorFile}
+                    files={project.files}
+                    projectName={project.name}
+                    rootPath={project.rootPath}
+                    revealLine={editorRevealLine}
+                    revealKey={editorRevealKey}
+                    onClose={onShowVisualizer}
+                    onSelectFile={onOpenEditorFile}
+                    onPersist={onPersistFile}
+                  />
+                </div>
+              )}
+              {!showCode &&
+                (viewMode === "logic" ? (
+                  <LogicalWorkflowVisualizer
+                    project={project}
+                    selectedId={selectedId}
+                    zoom={logicZoom}
+                    direction={workflowDirection}
+                    freePositioning={freePositioning}
+                    customPositions={logicPositions}
+                    onZoomChange={onLogicZoomChange}
+                    onCustomPositionsChange={onLogicPositionsChange}
+                    onSelectNode={selectNode}
+                  />
+                ) : (
+                  <TwoDVisualizer
+                    project={project}
+                    expandedFolders={expandedFolders}
+                    expandedFiles={expandedFiles}
+                    selectedId={selectedId}
+                    zoom={twoDZoom}
+                    direction={workflowDirection}
+                    freePositioning={freePositioning}
+                    customPositions={twoDPositions}
+                    onZoomChange={onTwoDZoomChange}
+                    onCustomPositionsChange={onTwoDPositionsChange}
+                    onSelectNode={selectNode}
+                    onToggleFolder={onToggleFolderFreely}
+                    onToggleFile={onToggleFileFreely}
+                  />
+                ))}
+            </>
           </Suspense>
         </FeatureErrorBoundary>
 

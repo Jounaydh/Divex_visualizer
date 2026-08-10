@@ -60,6 +60,33 @@ number of elements mounted at one instant.
 - Development builds warn when graph construction, layout, or routing blocks
   the renderer for 50 milliseconds or longer.
 
+## Project-loading safeguards
+
+- Folder scanning and file reads use asynchronous Electron main-process I/O.
+- The loader separates path discovery from content loading.
+- Metadata checks and file reads use at most 16 concurrent operations.
+- Unchanged files are reused from an in-memory cache keyed by path, size, and
+  modification time.
+- Only the three most recently loaded project roots retain cached contents.
+- A changed payload is analyzed in a Web Worker rather than the renderer.
+- Switching projects or changing the payload terminates stale analysis work.
+- Individual files that disappear during a scan are skipped instead of failing
+  the complete project load.
+
+### Kader loading smoke measurement
+
+On the development Mac used on August 4, 2026, the Kader workspace produced
+194 supported source/configuration files after ignored directories were
+removed. Observed loading times were:
+
+- first metadata scan and content read: approximately 123–170 ms
+- unchanged cached refresh: approximately 43–76 ms with zero file rereads
+- background analysis: approximately 229 ms for 5,708 semantic relationships
+
+These are smoke-test observations rather than release performance guarantees.
+The important behavior is that the analysis interval runs in a worker and does
+not occupy the renderer thread.
+
 ## Failure recovery
 
 A thrown map-rendering error is contained inside the canvas and does not remove
@@ -118,7 +145,8 @@ is an informed user override, not a replacement for safeguards.
 
 ## Future performance work
 
-A full IDE should move parsing, indexing, and large-graph layout to workers or
-utility processes. It should scan metadata incrementally and load file contents
-on demand instead of sending every supported file into the renderer. Those
-larger changes are tracked in the [IDE roadmap](IDE_ROADMAP.md).
+A full IDE should move persistent indexing and large-graph layout to utility
+processes and load editor contents on demand instead of returning every
+supported file after the scan. Background analysis and cached refreshes are now
+implemented, but on-demand document storage remains tracked in the
+[IDE roadmap](IDE_ROADMAP.md).

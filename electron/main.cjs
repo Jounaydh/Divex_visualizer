@@ -11,33 +11,97 @@ const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { promisify } = require("node:util");
+const {
+  commitGit,
+  getGitDiff,
+  getGitStatus,
+  mutateAll: mutateAllGit,
+  mutatePath: mutateGitPath,
+} = require("./git-service.cjs");
+const { loadProject } = require("./project-loader.cjs");
+const {
+  createProjectWatcherService,
+} = require("./project-watcher.cjs");
+const { createTerminalService } = require("./terminal-service.cjs");
 
 const execFileAsync = promisify(execFile);
 
 const isDevelopment = !app.isPackaged;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
 const MAX_RENDERER_REPORT_LENGTH = 24_000;
-const supportedExtensions = new Set([
-  ".dart",
-  ".java",
-  ".py",
-  ".yaml",
-  ".yml",
-  ".json",
-  ".gradle",
-  ".properties",
-]);
-const ignoredDirectories = new Set([
-  ".git",
-  ".dart_tool",
-  ".idea",
-  ".vscode",
-  "build",
-  "dist",
-  "node_modules",
-]);
-const MAX_FILES = 2000;
-const MAX_FILE_SIZE = 2 * 1024 * 1024;
+const terminalService = createTerminalService({
+  onEvent(owner, terminalEvent) {
+    if (owner && !owner.isDestroyed()) {
+      owner.send("terminal:event", terminalEvent);
+    }
+  },
+});
+const projectWatcherService = createProjectWatcherService();
+let miniWindow = null;
+let miniWindowState = null;
+let miniWindowStateTimer = null;
+
+function defaultMiniWindowState() {
+  return {
+    width: 720,
+    height: 520,
+    alwaysOnTop: false,
+  };
+}
+
+async function loadMiniWindowState() {
+  if (miniWindowState) return miniWindowState;
+  try {
+    const stored = JSON.parse(
+      await fs.readFile(
+        path.join(app.getPath("userData"), "mini-window-state.json"),
+        "utf8",
+      ),
+    );
+    miniWindowState = {
+      ...defaultMiniWindowState(),
+      ...stored,
+      width: Math.max(420, Number(stored.width) || 720),
+      height: Math.max(320, Number(stored.height) || 520),
+    };
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.error("Divex could not load its Mini window state.", error);
+    }
+    miniWindowState = defaultMiniWindowState();
+  }
+  return miniWindowState;
+}
+
+async function persistMiniWindowState() {
+  if (!miniWindowState) return;
+  try {
+    await fs.mkdir(app.getPath("userData"), { recursive: true });
+    await fs.writeFile(
+      path.join(app.getPath("userData"), "mini-window-state.json"),
+      JSON.stringify(miniWindowState, null, 2),
+      "utf8",
+    );
+  } catch (error) {
+    console.error("Divex could not save its Mini window state.", error);
+  }
+}
+
+function scheduleMiniWindowStateSave(window) {
+  if (!window || window.isDestroyed()) return;
+  const bounds = window.getBounds();
+  miniWindowState = {
+    ...defaultMiniWindowState(),
+    ...miniWindowState,
+    ...bounds,
+    alwaysOnTop: window.isAlwaysOnTop(),
+  };
+  clearTimeout(miniWindowStateTimer);
+  miniWindowStateTimer = setTimeout(() => {
+    miniWindowStateTimer = null;
+    void persistMiniWindowState();
+  }, 180);
+}
 
 function clippedReportValue(value) {
   return typeof value === "string"
@@ -98,47 +162,6 @@ function toolError(error, fallback) {
       ? fallback
       : [stdout, stderr, error?.message].filter(Boolean).join("\n");
   return { success: false, output: message || fallback };
-}
-
-async function readProjectFiles(rootPath) {
-  const files = [];
-
-  async function visit(directory) {
-    if (files.length >= MAX_FILES) return;
-    const entries = await fs.readdir(directory, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (files.length >= MAX_FILES) break;
-      if (entry.name.startsWith(".") && entry.name !== ".env") continue;
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name)) await visit(absolutePath);
-        continue;
-      }
-
-      const extension = path.extname(entry.name).toLowerCase();
-      if (!supportedExtensions.has(extension)) continue;
-      const stats = await fs.stat(absolutePath);
-      if (stats.size > MAX_FILE_SIZE) continue;
-      const content = await fs.readFile(absolutePath, "utf8");
-      files.push({
-        path: path.relative(rootPath, absolutePath).split(path.sep).join("/"),
-        content,
-      });
-    }
-  }
-
-  await visit(rootPath);
-  return files;
-}
-
-async function loadProject(rootPath) {
-  const files = await readProjectFiles(rootPath);
-  return {
-    name: path.basename(rootPath),
-    rootPath,
-    files,
-  };
 }
 
 function resolveMutableProjectEntry(rootPath, relativePath) {
@@ -423,18 +446,26 @@ async function openTerminalWindow(directory, command) {
   }
 }
 
-function loadRenderer(window, safeMode = false) {
+function loadRenderer(window, safeMode = false, rendererQuery = {}) {
+  const query = {
+    ...rendererQuery,
+    ...(safeMode ? { safeMode: "1" } : {}),
+  };
   if (isDevelopment) {
     const url = new URL("http://localhost:5173");
-    if (safeMode) url.searchParams.set("safeMode", "1");
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, String(value));
+      }
+    });
     return window.loadURL(url.toString());
   }
   return window.loadFile(path.join(__dirname, "..", "dist", "index.html"), {
-    query: safeMode ? { safeMode: "1" } : {},
+    query,
   });
 }
 
-function attachRendererRecovery(window) {
+function attachRendererRecovery(window, rendererQuery = {}) {
   let recentCrashes = [];
   let unresponsiveDialogOpen = false;
 
@@ -455,7 +486,9 @@ function attachRendererRecovery(window) {
 
     if (recentCrashes.length === 1) {
       setTimeout(() => {
-        if (!window.isDestroyed()) void loadRenderer(window, true);
+        if (!window.isDestroyed()) {
+          void loadRenderer(window, true, rendererQuery);
+        }
       }, 300);
       return;
     }
@@ -474,7 +507,9 @@ function attachRendererRecovery(window) {
       })
       .then(({ response }) => {
         if (window.isDestroyed()) return;
-        if (response === 0) void loadRenderer(window, true);
+        if (response === 0) {
+          void loadRenderer(window, true, rendererQuery);
+        }
         else window.close();
       });
   });
@@ -498,7 +533,7 @@ function attachRendererRecovery(window) {
       .then(({ response }) => {
         unresponsiveDialogOpen = false;
         if (response === 1 && !window.isDestroyed()) {
-          void loadRenderer(window, true);
+          void loadRenderer(window, true, rendererQuery);
         }
       });
   });
@@ -526,7 +561,66 @@ function createWindow() {
   });
 
   attachRendererRecovery(window);
+  const terminalOwner = window.webContents;
+  terminalOwner.once("destroyed", () => {
+    terminalService.closeOwnerSessions(terminalOwner);
+  });
   void loadRenderer(window);
+}
+
+async function createMiniWindow(rootPath) {
+  const resolvedRoot =
+    typeof rootPath === "string" && path.isAbsolute(rootPath)
+      ? path.resolve(rootPath)
+      : "";
+  const rendererQuery = {
+    mode: "mini",
+    rootPath: resolvedRoot,
+  };
+  if (miniWindow && !miniWindow.isDestroyed()) {
+    await loadRenderer(miniWindow, false, rendererQuery);
+    miniWindow.show();
+    miniWindow.focus();
+    return miniWindow;
+  }
+
+  const state = await loadMiniWindowState();
+  miniWindow = new BrowserWindow({
+    width: state.width,
+    height: state.height,
+    ...(Number.isFinite(state.x) && Number.isFinite(state.y)
+      ? { x: state.x, y: state.y }
+      : {}),
+    minWidth: 420,
+    minHeight: 320,
+    backgroundColor: "#101114",
+    title: "Divex Mini",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    trafficLightPosition: { x: 14, y: 13 },
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  miniWindow.setAlwaysOnTop(Boolean(state.alwaysOnTop), "floating");
+  attachRendererRecovery(miniWindow, rendererQuery);
+  miniWindow.on("move", () => scheduleMiniWindowStateSave(miniWindow));
+  miniWindow.on("resize", () => scheduleMiniWindowStateSave(miniWindow));
+  miniWindow.on("close", () => {
+    scheduleMiniWindowStateSave(miniWindow);
+    void persistMiniWindowState();
+  });
+  miniWindow.on("closed", () => {
+    miniWindow = null;
+  });
+  miniWindow.once("ready-to-show", () => {
+    if (miniWindow && !miniWindow.isDestroyed()) miniWindow.show();
+  });
+  await loadRenderer(miniWindow, false, rendererQuery);
+  return miniWindow;
 }
 
 ipcMain.handle("app:report-renderer-error", async (_event, report) => {
@@ -537,10 +631,61 @@ ipcMain.handle("app:report-renderer-error", async (_event, report) => {
 ipcMain.handle("app:reload-renderer", async (event, args) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window || window.isDestroyed()) return;
-  await loadRenderer(window, Boolean(args?.safeMode));
+  const currentUrl = new URL(window.webContents.getURL());
+  const rendererQuery =
+    currentUrl.searchParams.get("mode") === "mini"
+      ? {
+          mode: "mini",
+          rootPath: currentUrl.searchParams.get("rootPath") ?? "",
+        }
+      : {};
+  await loadRenderer(window, Boolean(args?.safeMode), rendererQuery);
 });
 
-ipcMain.handle("project:choose", async () => {
+ipcMain.handle("app:open-mini-window", async (_event, args) => {
+  try {
+    await createMiniWindow(args?.rootPath);
+    return { success: true, output: "Divex Mini opened." };
+  } catch (error) {
+    return toolError(error, "Divex Mini could not be opened.");
+  }
+});
+
+ipcMain.handle("app:get-mini-window-state", async (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  return {
+    success: true,
+    output: "Mini window state loaded.",
+    alwaysOnTop: Boolean(window?.isAlwaysOnTop()),
+  };
+});
+
+ipcMain.handle("app:set-mini-always-on-top", async (event, args) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) {
+    return { success: false, output: "The Mini window is not available." };
+  }
+  const alwaysOnTop = Boolean(args?.alwaysOnTop);
+  window.setAlwaysOnTop(alwaysOnTop, "floating");
+  scheduleMiniWindowStateSave(window);
+  return {
+    success: true,
+    output: alwaysOnTop
+      ? "Divex Mini will stay above other windows."
+      : "Always-on-top turned off.",
+    alwaysOnTop,
+  };
+});
+
+function projectProgressReporter(event) {
+  return (progress) => {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send("project:load-progress", progress);
+    }
+  };
+}
+
+ipcMain.handle("project:choose", async (event) => {
   const result = await dialog.showOpenDialog({
     title: "Open a project in Divex",
     properties: ["openDirectory"],
@@ -548,7 +693,10 @@ ipcMain.handle("project:choose", async () => {
   if (result.canceled || result.filePaths.length === 0) return null;
 
   const rootPath = result.filePaths[0];
-  const project = await loadProject(rootPath);
+  const project = await loadProject(
+    rootPath,
+    projectProgressReporter(event),
+  );
   const { files } = project;
   if (files.length === 0) {
     throw new Error("No supported source files were found in that folder.");
@@ -557,7 +705,7 @@ ipcMain.handle("project:choose", async () => {
   return project;
 });
 
-ipcMain.handle("project:refresh", async (_event, args) => {
+ipcMain.handle("project:refresh", async (event, args) => {
   try {
     if (!path.isAbsolute(args.rootPath)) {
       throw new Error("Open a local project folder before refreshing.");
@@ -565,14 +713,41 @@ ipcMain.handle("project:refresh", async (_event, args) => {
     return {
       success: true,
       output: "Project refreshed.",
-      project: await loadProject(path.resolve(args.rootPath)),
+      project: await loadProject(
+        path.resolve(args.rootPath),
+        projectProgressReporter(event),
+      ),
     };
   } catch (error) {
     return toolError(error, "The project could not be refreshed.");
   }
 });
 
-ipcMain.handle("project:rename-entry", async (_event, args) => {
+ipcMain.handle("project:watch", async (event, args) => {
+  try {
+    if (!path.isAbsolute(args?.rootPath)) {
+      throw new Error("Open a local project folder before watching it.");
+    }
+    const rootPath = projectWatcherService.start(
+      event.sender,
+      path.resolve(args.rootPath),
+    );
+    return {
+      success: true,
+      output: "Live project watching started.",
+      rootPath,
+    };
+  } catch (error) {
+    return toolError(error, "Live project watching could not be started.");
+  }
+});
+
+ipcMain.handle("project:unwatch", async (event) => {
+  projectWatcherService.stop(event.sender);
+  return { success: true, output: "Live project watching stopped." };
+});
+
+ipcMain.handle("project:rename-entry", async (event, args) => {
   try {
     const { resolvedRoot, resolvedEntry } = resolveMutableProjectEntry(
       args.rootPath,
@@ -594,7 +769,10 @@ ipcMain.handle("project:rename-entry", async (_event, args) => {
     return {
       success: true,
       output: `Renamed to ${nextName}.`,
-      project: await loadProject(resolvedRoot),
+      project: await loadProject(
+        resolvedRoot,
+        projectProgressReporter(event),
+      ),
       entryPath: path
         .relative(resolvedRoot, nextEntry)
         .split(path.sep)
@@ -639,7 +817,10 @@ ipcMain.handle("project:delete-entry", async (event, args) => {
     return {
       success: true,
       output: `Moved ${path.basename(resolvedEntry)} to the Trash.`,
-      project: await loadProject(resolvedRoot),
+      project: await loadProject(
+        resolvedRoot,
+        projectProgressReporter(event),
+      ),
     };
   } catch (error) {
     return toolError(error, "The item could not be moved to the Trash.");
@@ -780,6 +961,109 @@ ipcMain.handle("project:run-file", async (_event, args) => {
   }
 });
 
+ipcMain.handle("terminal:create", async (event, args) =>
+  terminalService.create(
+    {
+      rootPath: args?.rootPath,
+      cwd: args?.cwd,
+      cols: args?.cols,
+      rows: args?.rows,
+      title: args?.title || "Terminal",
+      kind: "shell",
+    },
+    event.sender,
+  ),
+);
+
+ipcMain.handle("terminal:run-task", async (event, args) => {
+  try {
+    if (!path.isAbsolute(args?.rootPath)) {
+      throw new Error("Open a local project folder before running a task.");
+    }
+    const resolvedRoot = path.resolve(args.rootPath);
+    const tasks = await detectProjectTasks(resolvedRoot);
+    const task = tasks.find((candidate) => candidate.id === args.taskId);
+    if (!task) throw new Error("That task is no longer available.");
+    return terminalService.create(
+      {
+        rootPath: resolvedRoot,
+        executable: task.executable,
+        args: task.args,
+        cols: args?.cols,
+        rows: args?.rows,
+        title: task.label,
+        kind: "task",
+        taskId: task.id,
+      },
+      event.sender,
+    );
+  } catch (error) {
+    return toolError(error, "The task could not be started.");
+  }
+});
+
+ipcMain.handle("terminal:run-file", async (event, args) => {
+  try {
+    const { resolvedRoot, resolvedEntry } = resolveMutableProjectEntry(
+      args?.rootPath,
+      args?.entryPath,
+    );
+    const extension = path.extname(resolvedEntry).toLowerCase();
+    const runner =
+      extension === ".dart"
+        ? { executable: "dart", args: ["run", resolvedEntry] }
+        : extension === ".py"
+          ? { executable: "python3", args: [resolvedEntry] }
+          : null;
+    if (!runner) {
+      throw new Error("Run Active File currently supports Dart and Python.");
+    }
+    return terminalService.create(
+      {
+        rootPath: resolvedRoot,
+        executable: runner.executable,
+        args: runner.args,
+        cols: args?.cols,
+        rows: args?.rows,
+        title: path.basename(resolvedEntry),
+        kind: "file",
+        filePath: args.entryPath,
+      },
+      event.sender,
+    );
+  } catch (error) {
+    return toolError(error, "The active file could not be started.");
+  }
+});
+
+ipcMain.handle("terminal:list", async (event) => ({
+  success: true,
+  output: "Terminal sessions loaded.",
+  sessions: terminalService.list(event.sender),
+}));
+
+ipcMain.handle("terminal:write", async (event, args) =>
+  terminalService.write(args?.sessionId, args?.data, event.sender),
+);
+
+ipcMain.handle("terminal:resize", async (event, args) =>
+  terminalService.resize(
+    args?.sessionId,
+    args?.cols,
+    args?.rows,
+    event.sender,
+  ),
+);
+
+ipcMain.handle("terminal:close", async (event, args) =>
+  terminalService.close(args?.sessionId, event.sender),
+);
+
+ipcMain.handle("terminal:close-all", async (event) => {
+  terminalService.closeOwnerSessions(event.sender);
+  return { success: true, output: "All terminal sessions closed." };
+});
+
 ipcMain.handle("project:share-entry", async (event, args) => {
   try {
     if (process.platform !== "darwin") {
@@ -798,7 +1082,7 @@ ipcMain.handle("project:share-entry", async (event, args) => {
   }
 });
 
-ipcMain.handle("project:paste-entry", async (_event, args) => {
+ipcMain.handle("project:paste-entry", async (event, args) => {
   try {
     const { resolvedRoot, resolvedEntry: sourceEntry } =
       resolveMutableProjectEntry(args.rootPath, args.sourcePath);
@@ -856,7 +1140,10 @@ ipcMain.handle("project:paste-entry", async (_event, args) => {
         args.mode === "copy"
           ? `Copied ${path.basename(destinationEntry)}.`
           : `Moved ${path.basename(destinationEntry)}.`,
-      project: await loadProject(resolvedRoot),
+      project: await loadProject(
+        resolvedRoot,
+        projectProgressReporter(event),
+      ),
       entryPath: path
         .relative(resolvedRoot, destinationEntry)
         .split(path.sep)
@@ -926,6 +1213,34 @@ ipcMain.handle("project:analyze-flutter", async (_event, args) => {
   }
 });
 
+ipcMain.handle("git:status", async (_event, args) =>
+  getGitStatus(args?.rootPath),
+);
+
+ipcMain.handle("git:diff", async (_event, args) =>
+  getGitDiff(args?.rootPath, args?.filePath, Boolean(args?.staged)),
+);
+
+ipcMain.handle("git:stage", async (_event, args) =>
+  mutateGitPath(args?.rootPath, args?.filePath, "stage"),
+);
+
+ipcMain.handle("git:unstage", async (_event, args) =>
+  mutateGitPath(args?.rootPath, args?.filePath, "unstage"),
+);
+
+ipcMain.handle("git:stage-all", async (_event, args) =>
+  mutateAllGit(args?.rootPath, "stage"),
+);
+
+ipcMain.handle("git:unstage-all", async (_event, args) =>
+  mutateAllGit(args?.rootPath, "unstage"),
+);
+
+ipcMain.handle("git:commit", async (_event, args) =>
+  commitGit(args?.rootPath, args?.message),
+);
+
 app.whenReady().then(() => {
   createWindow();
   app.on("activate", () => {
@@ -935,4 +1250,10 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  projectWatcherService.stopAll();
+  clearTimeout(miniWindowStateTimer);
+  void persistMiniWindowState();
 });

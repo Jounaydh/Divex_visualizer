@@ -38,6 +38,7 @@ interface TwoDVisualizerProps {
   onSelectNode: (node: VisualNode) => void;
   onToggleFolder: (id: string) => void;
   onToggleFile: (id: string) => void;
+  autoFocusOnLayout?: boolean;
 }
 
 const DEFAULT_ZOOM = 1.4;
@@ -58,6 +59,7 @@ export function TwoDVisualizer({
   onSelectNode,
   onToggleFolder,
   onToggleFile,
+  autoFocusOnLayout = true,
 }: TwoDVisualizerProps) {
   const [isPanning, setIsPanning] = useState(false);
   const graph = useMemo(
@@ -121,17 +123,27 @@ export function TwoDVisualizer({
   );
 
   useEffect(() => {
+    if (!autoFocusOnLayout) return;
     const frame = window.requestAnimationFrame(() => {
       focusNode(selectedId ?? "project");
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
     direction,
+    autoFocusOnLayout,
     focusNode,
     selectedId,
     automaticLayout.height,
     automaticLayout.width,
   ]);
+
+  useEffect(() => {
+    if (autoFocusOnLayout || !selectedId) return;
+    const frame = window.requestAnimationFrame(() => {
+      focusNode(selectedId);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [autoFocusOnLayout, direction, focusNode, selectedId]);
 
   useEffect(() => {
     const container = scrollRef.current;

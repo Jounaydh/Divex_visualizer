@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import {
@@ -10,6 +10,9 @@ import "./styles.css";
 
 const safeMode =
   new URLSearchParams(window.location.search).get("safeMode") === "1";
+const rendererMode =
+  new URLSearchParams(window.location.search).get("mode") ?? "workspace";
+const MiniApp = lazy(() => import("./mini/MiniApp"));
 installGlobalCrashReporting();
 
 createRoot(document.getElementById("root")!).render(
@@ -25,7 +28,13 @@ createRoot(document.getElementById("root")!).render(
         },
       ]}
     >
-      <App safeMode={safeMode} />
+      {rendererMode === "mini" ? (
+        <Suspense fallback={<div className="app-loading">Opening Divex Mini…</div>}>
+          <MiniApp />
+        </Suspense>
+      ) : (
+        <App safeMode={safeMode} />
+      )}
     </FeatureErrorBoundary>
   </StrictMode>,
 );

@@ -1,7 +1,9 @@
 import {
   Box,
   ChevronDown,
+  Files,
   FolderOpen,
+  GitBranch,
   ScanSearch,
 } from "lucide-react";
 import {
@@ -13,14 +15,20 @@ import type {
   AnalyzedProject,
   FolderNode,
 } from "../types";
+import { SourceControlPanel } from "../features/source-control/SourceControlPanel";
+
+export type SidebarView = "explorer" | "source-control";
 
 interface ProjectSidebarProps {
   project: AnalyzedProject;
+  activeView: SidebarView;
   selectedId: string | null;
   canUseNativePaths: boolean;
   canShare: boolean;
   hasClipboard: boolean;
   projectMenuOpen: boolean;
+  gitRefreshKey: number;
+  onChangeView: (view: SidebarView) => void;
   onToggleProjectMenu: () => void;
   onOpenProject: () => void;
   onLoadDemo: () => void;
@@ -37,15 +45,19 @@ interface ProjectSidebarProps {
   onCutEntry: (entry: ExplorerEntry) => void;
   onCopyEntry: (entry: ExplorerEntry) => void;
   onPasteEntry: (entry: ExplorerEntry) => void;
+  onOpenGitFile: (path: string) => void;
 }
 
 export function ProjectSidebar({
   project,
+  activeView,
   selectedId,
   canUseNativePaths,
   canShare,
   hasClipboard,
   projectMenuOpen,
+  gitRefreshKey,
+  onChangeView,
   onToggleProjectMenu,
   onOpenProject,
   onLoadDemo,
@@ -62,6 +74,7 @@ export function ProjectSidebar({
   onCutEntry,
   onCopyEntry,
   onPasteEntry,
+  onOpenGitFile,
 }: ProjectSidebarProps) {
   const symbolCount = project.files.reduce(
     (total, file) => total + file.symbols.length,
@@ -70,7 +83,26 @@ export function ProjectSidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-title">Explorer</div>
+      <div className="sidebar-tabs" aria-label="Project sidebar">
+        <button
+          type="button"
+          className={activeView === "explorer" ? "active" : ""}
+          title="Explorer"
+          onClick={() => onChangeView("explorer")}
+        >
+          <Files size={14} />
+          Explorer
+        </button>
+        <button
+          type="button"
+          className={activeView === "source-control" ? "active" : ""}
+          title="Source Control (⌃⇧G)"
+          onClick={() => onChangeView("source-control")}
+        >
+          <GitBranch size={14} />
+          Source Control
+        </button>
+      </div>
       <div className="project-switcher">
         <button
           type="button"
@@ -108,45 +140,56 @@ export function ProjectSidebar({
         </button>
       </div>
 
-      <div className="sidebar-label">
-        <span>PROJECT FILES</span>
-        <small>{project.files.length}</small>
-      </div>
-      <FileExplorer
-        root={project.root}
-        selectedId={selectedId}
-        canUseNativePaths={canUseNativePaths}
-        canShare={canShare}
-        hasClipboard={hasClipboard}
-        onSelectFile={onSelectFile}
-        onSelectFolder={onSelectFolder}
-        onRenameEntry={onRenameEntry}
-        onDeleteEntry={onDeleteEntry}
-        onCopyEntryPath={onCopyEntryPath}
-        onRevealEntry={onRevealEntry}
-        onRefresh={onRefresh}
-        onOpenExternal={onOpenExternal}
-        onOpenTerminal={onOpenTerminal}
-        onShareEntry={onShareEntry}
-        onCutEntry={onCutEntry}
-        onCopyEntry={onCopyEntry}
-        onPasteEntry={onPasteEntry}
-      />
+      {activeView === "explorer" ? (
+        <>
+          <div className="sidebar-label">
+            <span>PROJECT FILES</span>
+            <small>{project.files.length}</small>
+          </div>
+          <FileExplorer
+            root={project.root}
+            selectedId={selectedId}
+            canUseNativePaths={canUseNativePaths}
+            canShare={canShare}
+            hasClipboard={hasClipboard}
+            onSelectFile={onSelectFile}
+            onSelectFolder={onSelectFolder}
+            onRenameEntry={onRenameEntry}
+            onDeleteEntry={onDeleteEntry}
+            onCopyEntryPath={onCopyEntryPath}
+            onRevealEntry={onRevealEntry}
+            onRefresh={onRefresh}
+            onOpenExternal={onOpenExternal}
+            onOpenTerminal={onOpenTerminal}
+            onShareEntry={onShareEntry}
+            onCutEntry={onCutEntry}
+            onCopyEntry={onCopyEntry}
+            onPasteEntry={onPasteEntry}
+          />
 
-      <div className="sidebar-summary">
-        <div>
-          <span>{project.files.length}</span>
-          <small>files</small>
-        </div>
-        <div>
-          <span>{project.relationshipCount}</span>
-          <small>links</small>
-        </div>
-        <div>
-          <span>{symbolCount}</span>
-          <small>symbols</small>
-        </div>
-      </div>
+          <div className="sidebar-summary">
+            <div>
+              <span>{project.files.length}</span>
+              <small>files</small>
+            </div>
+            <div>
+              <span>{project.relationshipCount}</span>
+              <small>links</small>
+            </div>
+            <div>
+              <span>{symbolCount}</span>
+              <small>symbols</small>
+            </div>
+          </div>
+        </>
+      ) : (
+        <SourceControlPanel
+          rootPath={project.rootPath}
+          enabled={canUseNativePaths}
+          refreshKey={gitRefreshKey}
+          onOpenFile={onOpenGitFile}
+        />
+      )}
     </aside>
   );
 }

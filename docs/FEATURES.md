@@ -27,6 +27,80 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Ignores generated or dependency-heavy folders such as `.git`, `.dart_tool`,
   `build`, `dist`, and `node_modules`.
 
+## Project loading
+
+- Scans folders and supported-file metadata before reading source contents.
+- Skips symbolic links, oversized files, hidden folders, generated output, and
+  dependency directories.
+- Checks metadata and reads source with a bounded 16-operation concurrency
+  limit instead of one serial file at a time.
+- Keeps an in-memory least-recently-used cache for three projects.
+- Reuses unchanged file contents when path, size, and modification time match.
+- Reads only new or changed supported files during refresh and file operations.
+- Emits scanning and reading progress with completed and total counts.
+- Moves project parsing and graph analysis into a dedicated Web Worker.
+- Cancels a stale analysis worker when another project version arrives.
+- Keeps the last valid analyzed graph if background analysis fails and offers
+  retry or demo-project recovery.
+
+## Divex Mini companion
+
+- Opens from **File → Open Divex Mini** after a local project is loaded.
+- Runs in a separate resizable window with only the 2D Flow and Logic maps.
+- Starts at 720 × 520 and supports a 420 × 320 minimum layout.
+- Watches supported project files and debounces filesystem changes.
+- Uses the project loader cache so refreshes reread only new or modified files.
+- Rebuilds analysis in the existing cancelable background worker while keeping
+  the last valid map visible.
+- Preserves the active map viewport during live project revisions instead of
+  forcing the project root back to the center.
+- Can pause updates, accumulate changed paths, and process them after resume.
+- Searches files and code symbols from the compact title bar.
+- Keeps a compact View menu for map direction, free positioning, and layout
+  reset controls.
+- Opens the selected file in its operating-system-associated editor.
+- Persists map choice, live-update preference, window bounds, and
+  always-on-top state.
+- Keeps protected logic-map rendering enabled for large repositories.
+
+## IDE navigation
+
+- Adds a centered project-search control to the desktop title bar.
+- Opens files by fuzzy name or path with `Command/Ctrl+P`.
+- Opens the command palette with `Command/Ctrl+Shift+P`.
+- Searches classes, widgets, functions, methods, and signatures with
+  `Command/Ctrl+Shift+O`.
+- Searches text across every loaded project file with
+  `Command/Ctrl+Shift+F`.
+- Opens file, symbol, text, and reference results directly in the source editor
+  at the exact line.
+- Resolves the selected file or symbol to its definition.
+- Finds incoming semantic relationships and importing files for the selected
+  node.
+- Keeps up to 100 distinct map/editor locations and navigates backward or
+  forward with title-bar buttons or `Option/Alt+Left/Right`.
+- Includes commands for project refresh/open, map switching, source view,
+  guided/advanced mode, and free positioning.
+- Uses keyboard result selection, Enter to open, and Escape to close.
+
+## Git source control
+
+- Switches the left sidebar between Explorer and Source Control.
+- Opens Source Control with `Control+Shift+G` or the command palette.
+- Detects the current branch, detached HEAD state, and upstream ahead/behind
+  counts.
+- Separates staged changes from working-tree and untracked changes.
+- Opens a changed source file directly in the Divex editor.
+- Previews staged and unstaged unified diffs without launching an external
+  process window.
+- Stages or unstages one file or all changes in the opened project.
+- Creates a commit from staged changes with `Command/Ctrl+Enter`.
+- Refreshes when the project changes, when the window regains focus, or when
+  the user requests it.
+- Constrains file actions to paths inside the opened project and executes fixed
+  Git argument arrays rather than renderer-provided shell commands.
+- Does not expose discard, force, reset-hard, push, or credential operations.
+
 ## 2D project map
 
 - Is the default and prioritized visualization.
@@ -119,24 +193,57 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Opens in place of the active map from **View source code**.
 - Uses the open-source Ace editor with line numbers, familiar selection
   behavior, and syntax coloring.
+- Opens multiple files as tabs and keeps one Ace EditSession per document.
+- Preserves each tab's text buffer, undo history, cursor, and scroll position
+  while switching files.
+- Keeps editor sessions mounted when returning temporarily to a visual map.
+- Opens Explorer files in new editor tabs while source view is active.
+- Marks unsaved tabs and reports the total number of dirty open documents.
+- Protects dirty tab closure with Save and close, Don't save, and Cancel
+  choices.
+- Warns the desktop runtime when open buffers are dirty during a window close
+  or reload.
+- Saves the current document with `Command/Ctrl+S` and can save every dirty
+  tab in one action.
+- Adds undo, redo, find, and replace controls backed by Ace commands.
+- Shows project/file breadcrumbs and the code symbol containing the cursor.
+- Provides a per-file symbol outline that navigates directly to definitions.
+- Supports font sizing, word wrap, whitespace visibility, and 2/4-space tab
+  preferences.
 - Supports Dart, Java, Python, YAML, JSON, Gradle, and properties file modes
   where Ace provides them.
 - Saves through validated Electron IPC.
 - Formats Dart files with the locally installed Dart SDK.
 - Runs `flutter analyze --no-pub` for an opened Flutter project and shows the
   command result.
+- Parses Flutter analyzer output into Ace gutter annotations for open files and
+  reports the project problem count in the editor status bar.
 - Is code-split with the Ace engine so users who only explore maps do not pay
   the editor startup cost.
 
-## Tasks and terminal commands
+## Integrated terminal and tasks
 
-- Detects npm scripts and common Flutter, Maven, Gradle, Python, and Java tasks.
-- Runs a selected task, the detected build task, or a supported active file.
-- Opens the operating system terminal at the project or selected directory.
-- Shows task results in the app.
-
-These commands are an early IDE bridge. A persistent integrated terminal,
-process supervisor, debugger, and test explorer remain roadmap work.
+- Opens a docked interactive terminal with `Control+Backtick`.
+- Uses Xterm.js for terminal rendering and node-pty for a real pseudoterminal.
+- Supports multiple shell, task, and active-file sessions as tabs.
+- Streams terminal output directly to Xterm without placing every output chunk
+  in React state.
+- Preserves active sessions when the panel is hidden.
+- Resizes the PTY when the dock or application window changes size.
+- Resizes the dock with pointer dragging, keyboard arrows, or a double-click
+  reset.
+- Restarts the active shell, task, or file run from its trusted definition.
+- Terminates one session or closes every session.
+- Shows running/exited state and task exit codes.
+- Keeps an explicit operating-system terminal fallback.
+- Discovers npm scripts and Flutter, Maven, Gradle, Make, Python, and Java
+  project tasks.
+- Runs detected tasks and supported active files inside managed terminal tabs.
+- Runs build tasks with `Command/Ctrl+Shift+B`.
+- Limits each Electron window to 12 terminal sessions and bounds individual
+  renderer input messages.
+- Owns terminal sessions by Electron renderer and kills them on renderer
+  destruction, project changes, or explicit closure.
 
 ## Current analyzer coverage
 

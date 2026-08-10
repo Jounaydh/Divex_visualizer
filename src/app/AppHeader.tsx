@@ -1,9 +1,13 @@
 import {
+  ArrowLeft,
+  ArrowRight,
   ChevronRight,
   FileCode2,
   FolderOpen,
   Hammer,
+  PanelTopOpen,
   Play,
+  Search,
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
@@ -15,32 +19,60 @@ interface AppHeaderProps {
   fileMenuOpen: boolean;
   terminalMenuOpen: boolean;
   terminalEnabled: boolean;
+  miniEnabled: boolean;
   tasks: ProjectTask[];
   canRunActiveFile: boolean;
+  hasTerminalSessions: boolean;
+  hasActiveTerminal: boolean;
+  activeTerminalRunning: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
   onToggleFileMenu: () => void;
   onToggleTerminalMenu: () => void;
   onCloseMenus: () => void;
   onOpenProject: () => void;
+  onOpenMini: () => void;
   onNewTerminal: () => void;
+  onOpenExternalTerminal: () => void;
+  onShowTerminal: () => void;
+  onRestartTerminal: () => void;
+  onTerminateTerminal: () => void;
   onRunTask: (taskId: string) => void;
   onRunBuildTask: () => void;
   onRunActiveFile: () => void;
+  onGoBack: () => void;
+  onGoForward: () => void;
+  onOpenQuickSearch: () => void;
 }
 
 export function AppHeader({
   fileMenuOpen,
   terminalMenuOpen,
   terminalEnabled,
+  miniEnabled,
   tasks,
   canRunActiveFile,
+  hasTerminalSessions,
+  hasActiveTerminal,
+  activeTerminalRunning,
+  canGoBack,
+  canGoForward,
   onToggleFileMenu,
   onToggleTerminalMenu,
   onCloseMenus,
   onOpenProject,
+  onOpenMini,
   onNewTerminal,
+  onOpenExternalTerminal,
+  onShowTerminal,
+  onRestartTerminal,
+  onTerminateTerminal,
   onRunTask,
   onRunBuildTask,
   onRunActiveFile,
+  onGoBack,
+  onGoForward,
+  onOpenQuickSearch,
 }: AppHeaderProps) {
   const [taskPickerOpen, setTaskPickerOpen] = useState(false);
   const menuBarRef = useRef<HTMLDivElement>(null);
@@ -103,6 +135,14 @@ export function AppHeader({
                   <FolderOpen size={14} />
                   <span>Open Folder…</span>
                 </button>
+                <button
+                  type="button"
+                  disabled={!miniEnabled}
+                  onClick={() => runAndClose(onOpenMini)}
+                >
+                  <PanelTopOpen size={14} />
+                  <span>Open Divex Mini</span>
+                </button>
               </div>
             )}
           </div>
@@ -124,7 +164,7 @@ export function AppHeader({
                 >
                   <SquareTerminal size={14} />
                   <span>New Terminal</span>
-                  <kbd>⌃⇧`</kbd>
+                  <kbd>⌃`</kbd>
                 </button>
                 <button type="button" disabled>
                   <SquareTerminal size={14} />
@@ -134,7 +174,7 @@ export function AppHeader({
                 <button
                   type="button"
                   disabled={!terminalEnabled}
-                  onClick={() => runAndClose(onNewTerminal)}
+                  onClick={() => runAndClose(onOpenExternalTerminal)}
                 >
                   <SquareTerminal size={14} />
                   <span>New Terminal Window</span>
@@ -175,15 +215,27 @@ export function AppHeader({
 
                 <div className="header-menu-separator" />
 
-                <button type="button" disabled>
+                <button
+                  type="button"
+                  disabled={!hasTerminalSessions}
+                  onClick={() => runAndClose(onShowTerminal)}
+                >
                   <SquareTerminal size={14} />
-                  <span>Show Running Tasks…</span>
+                  <span>Show Terminal Panel</span>
                 </button>
-                <button type="button" disabled>
+                <button
+                  type="button"
+                  disabled={!hasActiveTerminal}
+                  onClick={() => runAndClose(onRestartTerminal)}
+                >
                   <SquareTerminal size={14} />
                   <span>Restart Running Task…</span>
                 </button>
-                <button type="button" disabled>
+                <button
+                  type="button"
+                  disabled={!activeTerminalRunning}
+                  onClick={() => runAndClose(onTerminateTerminal)}
+                >
                   <SquareTerminal size={14} />
                   <span>Terminate Task…</span>
                 </button>
@@ -228,8 +280,35 @@ export function AppHeader({
       </div>
 
       <div className="titlebar-center">
-        <span className="status-dot" />
-        Flutter analyzer
+        <div className="titlebar-history">
+          <button
+            type="button"
+            aria-label="Navigate back"
+            title="Back (⌥←)"
+            disabled={!canGoBack}
+            onClick={onGoBack}
+          >
+            <ArrowLeft size={14} />
+          </button>
+          <button
+            type="button"
+            aria-label="Navigate forward"
+            title="Forward (⌥→)"
+            disabled={!canGoForward}
+            onClick={onGoForward}
+          >
+            <ArrowRight size={14} />
+          </button>
+        </div>
+        <button
+          type="button"
+          className="titlebar-project-search"
+          onClick={onOpenQuickSearch}
+        >
+          <Search size={14} />
+          <span>Search project</span>
+          <kbd>⌘P</kbd>
+        </button>
       </div>
       <button type="button" className="ai-button" disabled>
         <Sparkles size={14} />

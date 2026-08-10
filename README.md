@@ -11,6 +11,12 @@ can be opened but still need dedicated semantic analyzers.
 ## What works today
 
 - Native folder opening and a VS Code-style project explorer
+- Metadata-first project scanning, cached refreshes, bounded parallel reads,
+  background analysis, and visible loading progress
+- Quick file, symbol, workspace-text, command, definition, and reference
+  navigation with back/forward history
+- Local Git status, branch tracking, diff preview, staging, and commits from a
+  dedicated Source Control sidebar
 - File actions including refresh, rename, delete, copy, paste, reveal, share,
   open externally, and open in a terminal
 - Expandable 2D project map for folders, files, symbols, and imports
@@ -23,10 +29,15 @@ can be opened but still need dedicated semantic analyzers.
   full-map override for capable computers
 - Crash boundaries for each visual feature, safe-mode renderer recovery, and
   persistent local diagnostics
-- Lazy-loaded Ace source editor with syntax coloring, save, Dart format, and
-  `flutter analyze`
-- Detected Flutter, npm, Maven, Gradle, Python, and Java tasks
+- Lazy-loaded multi-document Ace workspace with tabs, independent undo/buffers,
+  breadcrumbs, symbols, settings, save-all, Dart format, and analyzer problems
+- Lazy-loaded docked Xterm terminal with multiple interactive PTY sessions,
+  resizing, restart, termination, and an external-terminal fallback
+- Detected Flutter, npm, Maven, Gradle, Python, and Java tasks that run inside
+  managed terminal tabs with live output and exit status
 - A built-in Flutter demonstration project
+- A lightweight Divex Mini companion window with only the 2D and Logic maps,
+  live-on-save project watching, search, always-on-top, and external file open
 
 See [Features](docs/FEATURES.md) for the complete behavior inventory and
 [Project status](docs/PROJECT_STATUS.md) for implemented, partial, and planned
@@ -64,11 +75,15 @@ src/
 ├── components/              Small shared presentation components
 ├── config/                  Shared configuration
 ├── data/                    Built-in demonstration project
+├── mini/                    Lightweight live companion-window renderer
 ├── features/
 │   ├── editor/              Source editor and Flutter actions
 │   ├── explorer/            Project file tree
 │   ├── inspector/           Selection and relationship details
 │   ├── logic-map/           Semantic graph, layout, controls, and safeguards
+│   ├── navigation/          File, symbol, text, command, and history navigation
+│   ├── source-control/      Local Git status, diffs, staging, and commits
+│   ├── terminal/            Interactive sessions and detected task UI
 │   └── project-map/         Structure graph, layout, and interaction
 ├── App.tsx                  Application-level state and desktop coordination
 ├── styles.css               Shared visual system, grouped by UI region
