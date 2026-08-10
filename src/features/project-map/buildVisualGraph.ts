@@ -4,7 +4,7 @@ import type {
   FolderNode,
   VisualEdge,
   VisualNode,
-} from "../types";
+} from "../../types";
 
 interface VisualGraph {
   nodes: VisualNode[];

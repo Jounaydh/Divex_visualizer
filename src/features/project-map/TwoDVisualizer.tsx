@@ -1,15 +1,26 @@
 import {
-  Braces,
-  FileCode2,
   Focus,
-  Folder,
-  Layers3,
   Minus,
+  Move,
   Plus,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AnalyzedProject, VisualNode } from "../types";
-import { buildVisualGraph } from "../visualization/buildVisualGraph";
+import type {
+  AnalyzedProject,
+  VisualNode,
+  WorkflowDirection,
+  WorkflowPosition,
+} from "../../types";
+import { buildVisualGraph } from "./buildVisualGraph";
+import {
+  createTwoDEdgePath,
+  createTwoDLayout,
+  measureTwoDStage,
+  mergeTwoDPositions,
+  TWO_D_NODE_HEIGHT,
+  TWO_D_NODE_WIDTH,
+} from "./twoDLayout";
+import { WorkflowNode } from "../../components/WorkflowNode";
 
 interface TwoDVisualizerProps {
   project: AnalyzedProject;
@@ -17,22 +28,22 @@ interface TwoDVisualizerProps {
   expandedFiles: Set<string>;
   selectedId: string | null;
   zoom: number;
+  direction: WorkflowDirection;
+  freePositioning: boolean;
+  customPositions: Readonly<Record<string, WorkflowPosition>>;
   onZoomChange: (zoom: number) => void;
+  onCustomPositionsChange: (
+    positions: Record<string, WorkflowPosition>,
+  ) => void;
   onSelectNode: (node: VisualNode) => void;
   onToggleFolder: (id: string) => void;
   onToggleFile: (id: string) => void;
+  autoFocusOnLayout?: boolean;
 }
 
 const DEFAULT_ZOOM = 1.4;
 const MIN_MANUAL_ZOOM = 0.55;
 const MAX_ZOOM = 1.8;
-
-function SimpleIcon({ node }: { node: VisualNode }) {
-  if (node.kind === "project") return <Layers3 size={15} />;
-  if (node.kind === "folder") return <Folder size={15} />;
-  if (node.kind === "file") return <FileCode2 size={15} />;
-  return <Braces size={15} />;
-}
 
 export function TwoDVisualizer({
   project,
@@ -40,17 +51,27 @@ export function TwoDVisualizer({
   expandedFiles,
   selectedId,
   zoom,
+  direction,
+  freePositioning,
+  customPositions,
   onZoomChange,
+  onCustomPositionsChange,
   onSelectNode,
   onToggleFolder,
   onToggleFile,
+  autoFocusOnLayout = true,
 }: TwoDVisualizerProps) {
   const [isPanning, setIsPanning] = useState(false);
   const graph = useMemo(
     () => buildVisualGraph(project, expandedFolders, expandedFiles),
     [project, expandedFolders, expandedFiles],
   );
+  const customPositionsRef = useRef(customPositions);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const positionsRef = useRef<ReadonlyMap<string, WorkflowPosition>>(
+    new Map(),
+  );
+  const zoomRef = useRef(zoom);
   const panStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -58,47 +79,71 @@ export function TwoDVisualizer({
     scrollLeft: number;
     scrollTop: number;
   } | null>(null);
-  const minX = Math.min(...graph.nodes.map((node) => node.position[0]));
-  const maxX = Math.max(...graph.nodes.map((node) => node.position[0]));
-  const minY = Math.min(...graph.nodes.map((node) => node.position[1]));
-  const stageWidth = Math.max(980, (maxX - minX) * 72 + 360);
-  const stageHeight = Math.max(760, (7 - minY) * 38 + 180);
+  useEffect(() => {
+    customPositionsRef.current = customPositions;
+  }, [customPositions]);
+
+  const automaticLayout = useMemo(
+    () => createTwoDLayout(graph.nodes, direction),
+    [direction, graph.nodes],
+  );
   const positions = useMemo(
     () =>
-      new Map(
-        graph.nodes.map((node) => [
-          node.id,
-          {
-            x: (node.position[0] - minX) * 72 + 105,
-            y: (7 - node.position[1]) * 38 + 58,
-          },
-        ]),
+      mergeTwoDPositions(
+        graph.nodes,
+        automaticLayout.positions,
+        customPositions,
       ),
-    [graph.nodes, minX],
+    [automaticLayout.positions, customPositions, graph.nodes],
   );
+  const stage = useMemo(
+    () => measureTwoDStage(automaticLayout, positions),
+    [automaticLayout, positions],
+  );
+  positionsRef.current = positions;
+  zoomRef.current = zoom;
 
   const focusNode = useCallback(
     (nodeId: string, behavior: ScrollBehavior = "smooth") => {
       const container = scrollRef.current;
-      const position = positions.get(nodeId);
+      const position = positionsRef.current.get(nodeId);
       if (!container || !position) return;
+      const currentZoom = zoomRef.current;
       container.scrollTo({
         left:
-          (position.x + 75) * zoom - container.clientWidth / 2,
+          (position.x + TWO_D_NODE_WIDTH / 2) * currentZoom -
+          container.clientWidth / 2,
         top:
-          (position.y + 26) * zoom - container.clientHeight / 2,
+          (position.y + TWO_D_NODE_HEIGHT / 2) * currentZoom -
+          container.clientHeight / 2,
         behavior,
       });
     },
-    [positions, zoom],
+    [],
   );
 
   useEffect(() => {
+    if (!autoFocusOnLayout) return;
     const frame = window.requestAnimationFrame(() => {
       focusNode(selectedId ?? "project");
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusNode, selectedId, stageHeight, stageWidth]);
+  }, [
+    direction,
+    autoFocusOnLayout,
+    focusNode,
+    selectedId,
+    automaticLayout.height,
+    automaticLayout.width,
+  ]);
+
+  useEffect(() => {
+    if (autoFocusOnLayout || !selectedId) return;
+    const frame = window.requestAnimationFrame(() => {
+      focusNode(selectedId);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [autoFocusOnLayout, direction, focusNode, selectedId]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -106,37 +151,62 @@ export function TwoDVisualizer({
     const handleWheel = (event: WheelEvent) => {
       if (event.ctrlKey) {
         event.preventDefault();
-        onZoomChange(
-          Math.min(
-            MAX_ZOOM,
-            Math.max(
-              MIN_MANUAL_ZOOM,
-              zoom * Math.exp(-event.deltaY * 0.01),
-            ),
+        const zoomDelta =
+          event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+            ? event.deltaY
+            : event.deltaY * 16;
+        const nextZoom = Math.min(
+          MAX_ZOOM,
+          Math.max(
+            MIN_MANUAL_ZOOM,
+            zoomRef.current * Math.exp(-zoomDelta * 0.01),
           ),
         );
+        zoomRef.current = nextZoom;
+        onZoomChange(nextZoom);
         return;
       }
 
-      if (event.deltaX === 0 && event.deltaY === 0) return;
-      event.preventDefault();
       if (event.shiftKey && Math.abs(event.deltaX) < 0.01) {
-        container.scrollLeft += event.deltaY;
-        return;
+        event.preventDefault();
+        const distance =
+          event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+            ? event.deltaY
+            : event.deltaY * 16;
+        container.scrollBy({ left: distance, behavior: "auto" });
       }
-      container.scrollLeft += event.deltaX;
-      container.scrollTop += event.deltaY;
+      // Let the browser handle ordinary wheel and trackpad gestures natively.
+      // This preserves vertical scrolling and simultaneous two-axis movement.
     };
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => container.removeEventListener("wheel", handleWheel);
-  }, [onZoomChange, zoom]);
+  }, [onZoomChange]);
 
   const changeZoom = (nextZoom: number) => {
-    onZoomChange(Math.min(MAX_ZOOM, Math.max(MIN_MANUAL_ZOOM, nextZoom)));
+    const clampedZoom = Math.min(
+      MAX_ZOOM,
+      Math.max(MIN_MANUAL_ZOOM, nextZoom),
+    );
+    zoomRef.current = clampedZoom;
+    onZoomChange(clampedZoom);
+  };
+
+  const updateCustomPosition = (
+    nodeId: string,
+    position: WorkflowPosition,
+  ) => {
+    const nextPositions = {
+      ...customPositionsRef.current,
+      [nodeId]: position,
+    };
+    customPositionsRef.current = nextPositions;
+    onCustomPositionsChange(nextPositions);
   };
 
   return (
-    <div className="two-d-view">
+    <div
+      className={`two-d-view ${freePositioning ? "free-positioning" : ""}`}
+    >
       <div
         className={`two-d-scroll ${isPanning ? "panning" : ""}`}
         ref={scrollRef}
@@ -193,15 +263,15 @@ export function TwoDVisualizer({
         <div
           className="two-d-zoom-space"
           style={{
-            width: stageWidth * zoom,
-            height: stageHeight * zoom,
+            width: stage.width * zoom,
+            height: stage.height * zoom,
           }}
         >
           <div
             className="two-d-stage"
             style={{
-              width: stageWidth,
-              height: stageHeight,
+              width: stage.width,
+              height: stage.height,
               transform: `scale(${zoom})`,
             }}
           >
@@ -210,22 +280,15 @@ export function TwoDVisualizer({
                 const source = positions.get(edge.source);
                 const target = positions.get(edge.target);
                 if (!source || !target) return null;
-                const sourceX = source.x + 75;
-                const targetX = target.x + 75;
-                const path =
-                  edge.kind === "imports"
-                    ? `M ${sourceX} ${source.y + 26} C ${sourceX} ${
-                        source.y + 92
-                      }, ${targetX} ${target.y + 92}, ${targetX} ${
-                        target.y + 26
-                      }`
-                    : `M ${sourceX} ${source.y + 52} C ${sourceX} ${
-                        source.y + 96
-                      }, ${targetX} ${target.y - 44}, ${targetX} ${target.y}`;
                 return (
                   <path
                     key={edge.id}
-                    d={path}
+                    d={createTwoDEdgePath(
+                      source,
+                      target,
+                      direction,
+                      edge.kind === "imports",
+                    )}
                     className={edge.kind === "imports" ? "import-link" : ""}
                   />
                 );
@@ -242,27 +305,29 @@ export function TwoDVisualizer({
                     : undefined;
 
               return (
-                <button
-                  type="button"
+                <WorkflowNode
                   key={node.id}
-                  className={`two-d-node node-${node.kind} ${
-                    selectedId === node.id ? "selected" : ""
-                  }`}
-                  style={{ left: position.x, top: position.y }}
-                  onClick={() => onSelectNode(node)}
-                  onDoubleClick={toggle}
-                >
-                  <SimpleIcon node={node} />
-                  <span>
-                    <strong>{node.label}</strong>
-                    <small>{node.subtitle}</small>
-                  </span>
-                </button>
+                  node={node}
+                  position={position}
+                  zoom={zoom}
+                  selected={selectedId === node.id}
+                  freePositioning={freePositioning}
+                  onMove={updateCustomPosition}
+                  onSelect={onSelectNode}
+                  onToggle={toggle}
+                />
               );
             })}
           </div>
         </div>
       </div>
+      {freePositioning && (
+        <div className="positioning-hint">
+          <Move size={14} />
+          Free positioning on
+          <span>Drag cards to arrange</span>
+        </div>
+      )}
       <div className="two-d-zoom-controls">
         <button
           type="button"

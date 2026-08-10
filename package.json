@@ -2,38 +2,51 @@
   "name": "divex-visualizer",
   "version": "0.1.0",
   "private": true,
-  "description": "A beginner-friendly 3D code visualizer for understanding projects, dependencies, and execution structure.",
+  "description": "A beginner-friendly desktop code visualizer for understanding project structure and logical execution flow.",
   "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "postinstall": "node scripts/prepare-terminal.cjs",
     "build": "tsc -b && vite build",
+    "check": "npm run test && npm run typecheck && npm run build",
     "preview": "vite preview",
     "desktop": "electron .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@react-three/drei": "^10.7.4",
-    "@react-three/fiber": "^9.3.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "ace-builds": "^1.44.0",
     "lucide-react": "^0.468.0",
+    "node-pty": "^1.1.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "three": "^0.179.1"
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.2.1",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
-    "@types/three": "^0.179.0",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.0",
-    "electron": "^37.2.6",
+    "electron": "^43.2.0",
+    "jsdom": "^30.0.1",
     "typescript": "~5.8.3",
     "vite": "^7.1.2",
+    "vitest": "^4.1.10",
     "wait-on": "^8.0.4"
   },
   "allowScripts": {
-    "electron@37.10.3": true,
-    "esbuild@0.28.1": true
+    "electron@43.2.0": true,
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true,
+    "node-pty@1.1.0": true
   }
 }
