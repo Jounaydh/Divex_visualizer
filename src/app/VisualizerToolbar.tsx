@@ -8,7 +8,6 @@ import {
   ChevronDown,
   Maximize2,
   Minimize2,
-  Move3d,
   Route,
   RotateCcw,
   SlidersHorizontal,
@@ -42,7 +41,6 @@ interface VisualizerToolbarProps {
   onWorkflowDirectionChange: (direction: WorkflowDirection) => void;
   onToggleFreePositioning: () => void;
   onResetCustomPositions: () => void;
-  onResetCamera: () => void;
   onToggleFullscreen: () => void;
 }
 
@@ -60,7 +58,6 @@ export function VisualizerToolbar({
   onWorkflowDirectionChange,
   onToggleFreePositioning,
   onResetCustomPositions,
-  onResetCamera,
   onToggleFullscreen,
 }: VisualizerToolbarProps) {
   const viewMenuRef = useRef<HTMLDetailsElement>(null);
@@ -118,17 +115,8 @@ export function VisualizerToolbar({
             <Route size={14} />
             Logic map
           </button>
-          <button
-            type="button"
-            className={viewMode === "3d" ? "active" : ""}
-            onClick={() => onViewModeChange("3d")}
-          >
-            <Move3d size={14} />
-            3D map
-          </button>
         </div>
 
-        {viewMode !== "3d" && (
         <details className="view-menu-wrap" ref={viewMenuRef}>
           <summary
             className="view-menu-button"
@@ -189,7 +177,6 @@ export function VisualizerToolbar({
             )}
           </div>
         </details>
-        )}
       </div>
 
       <div className="canvas-context">
@@ -198,9 +185,7 @@ export function VisualizerToolbar({
             ? "Source code editor"
             : viewMode === "logic"
               ? "Logical code workflow"
-              : viewMode === "3d"
-                ? "Interactive 3D project map"
-                : "Workflow map"}
+              : "Workflow map"}
         </span>
         <i />
         <strong>{relationshipCount} relationships</strong>
@@ -224,17 +209,6 @@ export function VisualizerToolbar({
             Advanced
           </button>
         </div>
-        {viewMode === "3d" && !showCode && (
-          <button
-            type="button"
-            className="reset-button"
-            aria-label="Reset 3D camera"
-            title="Reset camera"
-            onClick={onResetCamera}
-          >
-            <RotateCcw size={15} />
-          </button>
-        )}
         <button
           type="button"
           className="reset-button fullscreen-button"

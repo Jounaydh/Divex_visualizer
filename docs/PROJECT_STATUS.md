@@ -12,7 +12,6 @@
 - Local Git branch/status, diff previews, staging, and commits
 - Dart/Flutter, Python, Java, HTML, JavaScript, and CSS lightweight analysis
 - 2D expandable project structure map
-- Interactive 3D project structure map with Windows input controls
 - Logical code workflow with nine relationship categories
 - Selection inspector, symbol list, guided mode, and advanced mode
 - Map directions, zoom, fullscreen, free positioning, and two-axis panning

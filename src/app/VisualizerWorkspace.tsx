@@ -24,11 +24,6 @@ const LogicalWorkflowVisualizer = lazy(() =>
     default: module.LogicalWorkflowVisualizer,
   })),
 );
-const ThreeVisualizer = lazy(() =>
-  import("../components/visualizer/three-d/ThreeVisualizer").then(
-    (module) => ({ default: module.ThreeVisualizer }),
-  ),
-);
 
 interface VisualizerWorkspaceProps {
   project: AnalyzedProject;
@@ -41,7 +36,6 @@ interface VisualizerWorkspaceProps {
   editorRevealKey: number;
   twoDZoom: number;
   logicZoom: number;
-  cameraResetKey: number;
   workflowDirection: WorkflowDirection;
   freePositioning: boolean;
   twoDPositions: Readonly<Record<string, WorkflowPosition>>;
@@ -53,7 +47,6 @@ interface VisualizerWorkspaceProps {
   onChangeWorkflowDirection: (direction: WorkflowDirection) => void;
   onToggleFreePositioning: () => void;
   onResetTwoDPositions: () => void;
-  onResetCamera: () => void;
   onFullscreenError: (message: string) => void;
   onShowVisualizer: () => void;
   onOpenEditorFile: (path: string) => void;
@@ -98,7 +91,6 @@ export function VisualizerWorkspace({
   editorRevealKey,
   twoDZoom,
   logicZoom,
-  cameraResetKey,
   workflowDirection,
   freePositioning,
   twoDPositions,
@@ -110,7 +102,6 @@ export function VisualizerWorkspace({
   onChangeWorkflowDirection,
   onToggleFreePositioning,
   onResetTwoDPositions,
-  onResetCamera,
   onFullscreenError,
   onShowVisualizer,
   onOpenEditorFile,
@@ -151,9 +142,7 @@ export function VisualizerWorkspace({
     ? "Source editor"
     : viewMode === "logic"
       ? "Logic map"
-      : viewMode === "3d"
-        ? "3D project map"
-        : "2D project map";
+      : "2D project map";
   const recoveryActions = showCode
     ? [
         {
@@ -178,19 +167,7 @@ export function VisualizerWorkspace({
             onSelect: () => onChangeView("2d"),
           },
         ]
-      : viewMode === "3d"
-        ? [
-            {
-              label: "Reset 3D camera",
-              onSelect: onResetCamera,
-              primary: true,
-            },
-            {
-              label: "Open 2D project map",
-              onSelect: () => onChangeView("2d"),
-            },
-          ]
-        : [
+      : [
           {
             label: "Reset project map",
             onSelect: () => {
@@ -224,11 +201,7 @@ export function VisualizerWorkspace({
         freePositioning={freePositioning}
         hasCustomPositions={
           Object.keys(
-            viewMode === "logic"
-              ? logicPositions
-              : viewMode === "2d"
-                ? twoDPositions
-                : {},
+            viewMode === "logic" ? logicPositions : twoDPositions,
           ).length > 0
         }
         isFullscreen={isFullscreen}
@@ -237,7 +210,6 @@ export function VisualizerWorkspace({
         onWorkflowDirectionChange={onChangeWorkflowDirection}
         onToggleFreePositioning={onToggleFreePositioning}
         onResetCustomPositions={onResetTwoDPositions}
-        onResetCamera={onResetCamera}
         onToggleFullscreen={() => void handleToggleFullscreen()}
       />
 
@@ -288,18 +260,6 @@ export function VisualizerWorkspace({
                     onCustomPositionsChange={onLogicPositionsChange}
                     onSelectNode={selectNode}
                   />
-                ) : viewMode === "3d" ? (
-                  <ThreeVisualizer
-                    project={project}
-                    expandedFolders={expandedFolders}
-                    expandedFiles={expandedFiles}
-                    selectedId={selectedId}
-                    experienceMode={experienceMode}
-                    cameraResetKey={cameraResetKey}
-                    onSelectNode={selectNode}
-                    onToggleFolder={onToggleFolderFreely}
-                    onToggleFile={onToggleFileFreely}
-                  />
                 ) : (
                   <TwoDVisualizer
                     project={project}
@@ -327,20 +287,13 @@ export function VisualizerWorkspace({
             <span>Select a card to isolate its direct links</span>
           </div>
         )}
-        {!showCode && viewMode === "3d" && (
-          <div className="canvas-help">
-            <span>Mouse drag or two-finger sideways: rotate</span>
-            <span>Two-finger vertical: move</span>
-            <span>Ctrl + wheel or pinch: zoom</span>
-          </div>
-        )}
-        {!showCode && viewMode !== "logic" && (
+        {!showCode && viewMode === "2d" && (
           <div className="graph-legend">
             <span>
               <i className="line-solid" /> Contains
             </span>
             <span>
-              <i className="line-dashed" /> References
+              <i className="line-dashed" /> Imports
             </span>
           </div>
         )}

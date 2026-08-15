@@ -119,8 +119,8 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 
 ## Logical workflow map
 
-- Complements the project and 3D maps with a graph focused on code meaning
-  rather than folder shape.
+- Replaces the earlier experimental 3D view with a second 2D graph focused on
+  code meaning rather than folder shape.
 - Builds cards for the project, files, functions, methods, constructors,
   classes, widgets, external packages, and inferred external APIs.
 - Displays labeled, directed relationships:
@@ -158,15 +158,6 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
   visible area instead of allocating a single enormous surface.
 - Defers loading the entire logic-map feature until the Logic map tab is
   requested.
-
-## 3D project map
-
-- Keeps the project, folder, file, symbol, containment, and dependency graph
-  available as a lazy-loaded 3D view.
-- Supports Windows mouse-drag rotation, horizontal trackpad rotation, vertical
-  movement, controlled zoom, camera reset, selection, and expansion.
-- Shares fullscreen, selection, inspector, crash-containment, and recovery
-  behavior with the 2D and Logic maps.
 
 ## Crash containment and recovery
 

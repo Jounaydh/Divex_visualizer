@@ -7,7 +7,6 @@ import {
 } from "./app/crashReporting";
 import { FeatureErrorBoundary } from "./components/FeatureErrorBoundary";
 import "./styles.css";
-import "./styles/three-d-visualizer.css";
 
 const platform =
   window.divex?.platform ??

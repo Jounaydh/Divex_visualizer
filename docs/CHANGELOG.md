@@ -9,8 +9,8 @@ yet use formal releases.
 
 - Integrated the complete crash-containment/IDE feature line into the Windows
   desktop branch.
-- Restored the lazy 3D project map and its Windows mouse/trackpad controls
-  alongside the 2D and Logic maps.
+- Matched the current Mac/V2 visualization workspace with focused 2D Project
+  and Logic maps, removing the retired experimental 3D renderer.
 - Added Dart/Flutter, Python, Java, HTML, JavaScript, and CSS adapters and Ace
   modes to the V2 worker, navigation, explorer, editor, inspector, and maps.
 - Restored NSIS and portable Windows packaging, relative packaged assets,
@@ -48,7 +48,7 @@ yet use formal releases.
 
 ### Logical workflow
 
-- Added a logical workflow map alongside the project and 3D maps.
+- Replaced the experimental 3D visualization with a logical workflow map.
 - Added starts, calls, creates, defines, extends, implements, uses, imports, and
   contains relationships.
 - Added execution and all-relationship presets, per-kind filters, directed

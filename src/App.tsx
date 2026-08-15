@@ -104,7 +104,6 @@ export default function App({ safeMode = false }: AppProps) {
   const [freePositioning, setFreePositioning] = useState(false);
   const [twoDZoom, setTwoDZoom] = useState(DEFAULT_TWO_D_ZOOM);
   const [logicZoom, setLogicZoom] = useState(0.8);
-  const [cameraResetKey, setCameraResetKey] = useState(0);
   const [twoDPositions, setTwoDPositions] = useState<
     Record<string, WorkflowPosition>
   >({});
@@ -280,7 +279,6 @@ export default function App({ safeMode = false }: AppProps) {
     setExpandedFiles(new Set());
     setTwoDZoom(DEFAULT_TWO_D_ZOOM);
     setLogicZoom(0.8);
-    setCameraResetKey((current) => current + 1);
     setTwoDPositions({});
     setLogicPositions({});
     setSelectedNode(null);
@@ -924,13 +922,6 @@ export default function App({ safeMode = false }: AppProps) {
       run: () => changeView("logic"),
     },
     {
-      id: "view.3d-map",
-      title: "Show 3D Project Map",
-      description: "Open the interactive three-dimensional project structure",
-      keywords: "view structure dependencies 3d map",
-      run: () => changeView("3d"),
-    },
-    {
       id: "view.source-control",
       title: "Show Source Control",
       description: "Review, stage, and commit local Git changes",
@@ -1209,7 +1200,6 @@ export default function App({ safeMode = false }: AppProps) {
           editorRevealKey={editorRevealKey}
           twoDZoom={twoDZoom}
           logicZoom={logicZoom}
-          cameraResetKey={cameraResetKey}
           workflowDirection={workflowDirection}
           freePositioning={freePositioning}
           twoDPositions={twoDPositions}
@@ -1224,9 +1214,6 @@ export default function App({ safeMode = false }: AppProps) {
             if (viewMode === "logic") setLogicPositions({});
             else setTwoDPositions({});
           }}
-          onResetCamera={() =>
-            setCameraResetKey((current) => current + 1)
-          }
           onFullscreenError={(message) => {
             showTransientNotice(message);
           }}

@@ -20,8 +20,6 @@ and CSS, while the richer logical call graph currently remains Dart-focused.
 - File actions including refresh, rename, delete, copy, paste, reveal, share,
   open externally, and open in a terminal
 - Expandable 2D project map for folders, files, symbols, and imports
-- Interactive 3D project map with Windows mouse-drag rotation, trackpad
-  movement, zoom, and camera reset
 - Logical workflow map for starts, calls, object creation, definitions,
   inheritance, interfaces, type usage, containment, and imports
 - Guided and advanced inspection modes with incoming and outgoing links
@@ -76,8 +74,8 @@ npm run pack:win
 npm run dist:win
 ```
 
-The existing 0.2.3 installer is retained in `release/`. New builds use the
-0.3.0 version and do not overwrite it.
+Existing installers are retained in `release/`. New builds use version 0.3.1
+and do not overwrite the earlier 0.2.3 or 0.3.0 packages.
 
 ## Project structure
 
@@ -87,7 +85,6 @@ src/
 ├── analysis/                Language-neutral analysis and language adapters
 ├── app/                     Workbench shell and cross-feature composition
 ├── components/              Small shared presentation components
-│   └── visualizer/three-d/  3D scene, geometry, and Windows gestures
 ├── config/                  Shared configuration
 ├── data/                    Built-in demonstration project
 ├── mini/                    Lightweight live companion-window renderer

@@ -1,5 +1,5 @@
 export type ExperienceMode = "beginner" | "advanced";
-export type ViewMode = "2d" | "logic" | "3d";
+export type ViewMode = "2d" | "logic";
 export type WorkflowDirection =
   | "top-down"
   | "bottom-up"
