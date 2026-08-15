@@ -1,160 +1,142 @@
 # Divex Visualizer
 
-Divex Visualizer is a desktop-first code exploration tool that turns a project
-into an interactive 3D dependency space and a conventional 2D workflow. Its
-first analyzer targets Dart and Flutter, while its internal project and graph
-models are intentionally language-neutral.
+Divex Visualizer is a beginner-friendly desktop code explorer. It turns a
+project into an interactive structure map and a logical workflow so people can
+see where code lives, what it contains, and how its parts connect.
 
-## Current prototype
+The current prototype is built with Electron, React, TypeScript, and Vite.
+Shared language adapters analyze Dart/Flutter, Python, Java, HTML, JavaScript,
+and CSS, while the richer logical call graph currently remains Dart-focused.
 
-- VS Code-style project explorer
-- Native desktop folder picker
-- Rotatable, zoomable, and pannable WebGL visualization
-- Camera-facing 2D folder, file, and symbol controls inside the 3D space
-- Expandable and collapsible folder groups
-- File-to-file import relationships
-- File drill-down into Flutter widgets, classes, functions, and methods
-- Direct source-code inspection
-- Guided and advanced inspection modes
-- 2D workflow with four flow directions and optional free positioning
-- Fullscreen viewing for both 2D and 3D
-- Built-in Flutter demonstration project
+## What works today
 
-## Windows support
+- Native folder opening and a VS Code-style project explorer
+- Metadata-first project scanning, cached refreshes, bounded parallel reads,
+  background analysis, and visible loading progress
+- Quick file, symbol, workspace-text, command, definition, and reference
+  navigation with back/forward history
+- Local Git status, branch tracking, diff preview, staging, and commits from a
+  dedicated Source Control sidebar
+- File actions including refresh, rename, delete, copy, paste, reveal, share,
+  open externally, and open in a terminal
+- Expandable 2D project map for folders, files, symbols, and imports
+- Interactive 3D project map with Windows mouse-drag rotation, trackpad
+  movement, zoom, and camera reset
+- Logical workflow map for starts, calls, object creation, definitions,
+  inheritance, interfaces, type usage, containment, and imports
+- Guided and advanced inspection modes with incoming and outgoing links
+- Direction controls, fullscreen, free positioning, independent zoom, keyboard
+  scrolling, and free two-axis canvas panning
+- Protected rendering for highly connected repositories, with an explicit
+  full-map override for capable computers
+- Crash boundaries for each visual feature, safe-mode renderer recovery, and
+  persistent local diagnostics
+- Lazy-loaded multi-document Ace workspace with tabs, independent undo/buffers,
+  breadcrumbs, symbols, settings, save-all, Dart format, and analyzer problems
+- Lazy-loaded docked Xterm terminal with multiple interactive PTY sessions,
+  resizing, restart, termination, and an external-terminal fallback
+- Detected Flutter, npm, Maven, Gradle, Python, and Java tasks that run inside
+  managed terminal tabs with live output and exit status
+- A built-in Flutter demonstration project
+- A lightweight Divex Mini companion window with only the 2D and Logic maps,
+  live-on-save project watching, search, always-on-top, and external file open
+- Windows NSIS and portable packaging with relative packaged assets,
+  native title-bar controls, SDK command discovery, and bundled PTY support
 
-The packaged application runs on 64-bit Windows 10 or 11. End users do not
-need Node.js; the installer and portable executable include the Electron
-runtime.
-
-Development and packaging requirements:
-
-- Node.js 22.12 or newer (the current LTS release is recommended)
-- npm, which is included with Node.js
-- Optional: the Flutter SDK if you want to use **Format** or
-  **Flutter Analyze**
-
-The application itself uses Electron, React, and TypeScript, so it does not
-need a language rewrite for Windows. Project paths, Windows window controls,
-keyboard shortcuts, and the `.bat` launchers supplied by the Windows Flutter
-SDK are handled by the desktop process.
-
-To enable the optional Flutter tools, add the Flutter SDK's `bin` directory to
-your Windows user `PATH`, open a new PowerShell window, and verify:
-
-```powershell
-flutter --version
-dart --version
-```
+See [Features](docs/FEATURES.md) for the complete behavior inventory and
+[Project status](docs/PROJECT_STATUS.md) for implemented, partial, and planned
+work.
 
 ## Run locally
 
-From PowerShell in the project directory:
+Requirements:
 
-```powershell
-npm ci
+- Node.js 22.12 or newer
+- npm
+- Flutter and Dart on `PATH` for Flutter-specific commands
+
+```bash
+npm install
 npm run dev
 ```
 
-`npm run dev` starts the renderer and opens the Electron desktop window.
+Validation:
 
-To build the renderer and run it without the development server:
-
-```powershell
-npm start
+```bash
+npm run check
 ```
 
-Validation commands:
+`npm run check` runs unit tests, six-language adapter verification, strict
+TypeScript validation, and a production renderer build.
 
-```powershell
-npm run typecheck
-npm run build
-```
+Windows packages:
 
-## Build for Windows
-
-Create both an assisted installer and a no-install portable executable:
-
-```powershell
+```bash
+npm run pack:win
 npm run dist:win
 ```
 
-The files are written to `release`:
+The existing 0.2.3 installer is retained in `release/`. New builds use the
+0.3.0 version and do not overwrite it.
 
-- `Divex Visualizer-Setup-<version>-x64.exe`
-- `Divex Visualizer-Portable-<version>-x64.exe`
-
-For a faster unpacked build that is useful for testing:
-
-```powershell
-npm run pack:win
-```
-
-Local builds are unsigned. Windows SmartScreen can therefore warn when someone
-downloads the executable on another PC. A public release should be signed with
-a trusted Windows code-signing certificate.
-
-## Analyzer architecture
-
-Every language add-on will convert its source files into the same internal
-project graph:
+## Project structure
 
 ```text
-Language adapter
-  -> files, symbols, dependencies, and relationships
-  -> shared Divex graph
-  -> 2D and 3D renderers
-  -> guided or advanced explanation layer
-```
-
-Planned analyzer sequence:
-
-1. Dart and Flutter — current foundation
-2. Java
-3. Python
-4. JavaScript and TypeScript
-5. Additional languages as independent adapters
-
-Future graph providers can add database schemas, tables, fields, foreign keys,
-ORM models, and code-to-database data flow without replacing the renderer.
-Local AI explanations are planned as a later, optional layer over the trusted
-parser output.
-
-## Source layout
-
-The renderer is organized by responsibility instead of keeping the full
-application flow in one component:
-
-```text
+electron/                    Desktop window, filesystem, tasks, and safe IPC
 src/
-  App.tsx                         project and view orchestration
-  analysis/                       language-neutral project analysis
-  components/
-    shell/                        title bar and project sidebar
-    visualizer/
-      VisualizerToolbar.tsx       view selection and workflow settings
-      two-d/                      2D canvas, nodes, connections, navigation
-      three-d/                    3D scene, nodes, geometry, gestures
-  hooks/
-    useElementFullscreen.ts       fullscreen lifecycle
-    useGraphExpansion.ts          2D/3D expansion rules
-  visualization/
-    buildVisualGraph.ts           shared visual graph construction
-    twoDLayout.ts                 pure 2D layout and edge-routing math
-  styles/
-    visualizer-toolbar.css        toolbar and View menu
-    two-d-visualizer.css          2D workflow canvas
+├── analysis/                Language-neutral analysis and language adapters
+├── app/                     Workbench shell and cross-feature composition
+├── components/              Small shared presentation components
+│   └── visualizer/three-d/  3D scene, geometry, and Windows gestures
+├── config/                  Shared configuration
+├── data/                    Built-in demonstration project
+├── mini/                    Lightweight live companion-window renderer
+├── features/
+│   ├── editor/              Source editor and Flutter actions
+│   ├── explorer/            Project file tree
+│   ├── inspector/           Selection and relationship details
+│   ├── logic-map/           Semantic graph, layout, controls, and safeguards
+│   ├── navigation/          File, symbol, text, command, and history navigation
+│   ├── source-control/      Local Git status, diffs, staging, and commits
+│   ├── terminal/            Interactive sessions and detected task UI
+│   └── project-map/         Structure graph, layout, and interaction
+├── App.tsx                  Application-level state and desktop coordination
+├── styles.css               Shared visual system, grouped by UI region
+└── types.ts                 Shared renderer, graph, project, and IPC types
+docs/                        Architecture, features, performance, and roadmap
 ```
 
-The main data flow is:
+Feature code owns feature-specific behavior. `src/components/` is deliberately
+limited to UI elements shared by multiple features.
 
-```text
-Project files
-  -> analyzeProject
-  -> shared project model
-  -> expansion state
-  -> buildVisualGraph
-  -> 2D layout or 3D scene
-```
+## Documentation
 
-Pure graph and layout code stays outside React components, while pointer,
-keyboard, camera, and fullscreen behavior is kept in focused hooks.
+- [Documentation index](docs/README.md)
+- [Features](docs/FEATURES.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development guide](docs/DEVELOPMENT.md)
+- [Performance and large maps](docs/PERFORMANCE.md)
+- [Testing guide](docs/TESTING.md)
+- [Project status](docs/PROJECT_STATUS.md)
+- [Change history](docs/CHANGELOG.md)
+- [Full IDE roadmap](docs/IDE_ROADMAP.md)
+
+## Language support
+
+Every analyzer converts its source into the shared Divex project graph:
+
+1. Dart and Flutter
+2. Python
+3. Java
+4. JavaScript
+5. HTML
+6. CSS
+
+Ace syntax highlighting and local dependency mapping cover all six adapters.
+The Logic map adds deeper call, creation, inheritance, interface, and type-use
+relationships for Dart.
+
+Database providers will later add schemas, tables, columns, foreign keys, ORM
+models, and code-to-database data flow to the same graph. A future local AI
+layer may explain trusted analysis results, but it should never replace the
+parser, compiler, or language service.

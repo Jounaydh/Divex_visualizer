@@ -7,7 +7,7 @@ import type {
   ExperienceMode,
   VisualNode,
 } from "../../../types";
-import { buildVisualGraph } from "../../../visualization/buildVisualGraph";
+import { buildVisualGraph } from "../../../features/project-map/buildVisualGraph";
 import { ThreeDNode } from "./ThreeDNode";
 import {
   AUTOLOCK_EASING,

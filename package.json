@@ -1,18 +1,24 @@
 {
   "name": "divex-visualizer",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
-  "description": "A beginner-friendly 3D code visualizer for understanding projects, dependencies, and execution structure.",
+  "description": "A beginner-friendly desktop code visualizer for understanding project structure and logical execution flow.",
   "main": "electron/main.cjs",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.12.0",
+    "npm": ">=10"
   },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
+    "postinstall": "node scripts/prepare-terminal.cjs",
     "build": "tsc -b && vite build",
+    "check": "npm run test && npm run test:languages && npm run typecheck && npm run build",
     "preview": "vite preview",
     "start": "npm run build && electron .",
     "desktop": "npm run start",
+    "test": "vitest run",
+    "test:languages": "node scripts/verify-language-support.cjs",
+    "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "pack:win": "npm run build && node scripts/build-windows.cjs dir",
     "dist:win": "npm run build && node scripts/build-windows.cjs"
@@ -20,13 +26,18 @@
   "dependencies": {
     "@react-three/drei": "^10.7.4",
     "@react-three/fiber": "^9.3.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "ace-builds": "^1.44.0",
     "lucide-react": "^0.468.0",
+    "node-pty": "^1.1.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "three": "^0.179.1"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.2.1",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
@@ -35,14 +46,20 @@
     "concurrently": "^9.2.0",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
+    "jsdom": "^28.1.0",
     "typescript": "~5.8.3",
     "vite": "^7.1.2",
+    "vitest": "^4.1.10",
     "wait-on": "^8.0.4"
   },
   "build": {
     "appId": "com.divex.visualizer",
     "productName": "Divex Visualizer",
     "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
     "directories": {
       "output": "release"
     },
@@ -80,6 +97,8 @@
   },
   "allowScripts": {
     "electron@43.2.0": true,
-    "esbuild@0.28.1": true
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true,
+    "node-pty@1.1.0": true
   }
 }
