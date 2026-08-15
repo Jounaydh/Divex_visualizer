@@ -21,6 +21,7 @@ import {
   TWO_D_NODE_WIDTH,
 } from "./twoDLayout";
 import { WorkflowNode } from "../../components/WorkflowNode";
+import { useAnchoredZoom } from "../viewport/useAnchoredZoom";
 
 interface TwoDVisualizerProps {
   project: AnalyzedProject;
@@ -71,7 +72,6 @@ export function TwoDVisualizer({
   const positionsRef = useRef<ReadonlyMap<string, WorkflowPosition>>(
     new Map(),
   );
-  const zoomRef = useRef(zoom);
   const panStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -100,8 +100,19 @@ export function TwoDVisualizer({
     () => measureTwoDStage(automaticLayout, positions),
     [automaticLayout, positions],
   );
+  const {
+    zoomRef,
+    changeZoom,
+    changeZoomByStep,
+    handleControlWheel,
+  } = useAnchoredZoom({
+    scrollRef,
+    zoom,
+    minZoom: MIN_MANUAL_ZOOM,
+    maxZoom: MAX_ZOOM,
+    onZoomChange,
+  });
   positionsRef.current = positions;
-  zoomRef.current = zoom;
 
   const focusNode = useCallback(
     (nodeId: string, behavior: ScrollBehavior = "smooth") => {
@@ -149,23 +160,7 @@ export function TwoDVisualizer({
     const container = scrollRef.current;
     if (!container) return;
     const handleWheel = (event: WheelEvent) => {
-      if (event.ctrlKey) {
-        event.preventDefault();
-        const zoomDelta =
-          event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
-            ? event.deltaY
-            : event.deltaY * 16;
-        const nextZoom = Math.min(
-          MAX_ZOOM,
-          Math.max(
-            MIN_MANUAL_ZOOM,
-            zoomRef.current * Math.exp(-zoomDelta * 0.01),
-          ),
-        );
-        zoomRef.current = nextZoom;
-        onZoomChange(nextZoom);
-        return;
-      }
+      if (handleControlWheel(event)) return;
 
       if (event.shiftKey && Math.abs(event.deltaX) < 0.01) {
         event.preventDefault();
@@ -180,16 +175,7 @@ export function TwoDVisualizer({
     };
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => container.removeEventListener("wheel", handleWheel);
-  }, [onZoomChange]);
-
-  const changeZoom = (nextZoom: number) => {
-    const clampedZoom = Math.min(
-      MAX_ZOOM,
-      Math.max(MIN_MANUAL_ZOOM, nextZoom),
-    );
-    zoomRef.current = clampedZoom;
-    onZoomChange(clampedZoom);
-  };
+  }, [handleControlWheel]);
 
   const updateCustomPosition = (
     nodeId: string,
@@ -332,7 +318,7 @@ export function TwoDVisualizer({
         <button
           type="button"
           aria-label="Zoom out"
-          onClick={() => changeZoom(zoom - 0.1)}
+          onClick={() => changeZoomByStep(-1)}
         >
           <Minus size={14} />
         </button>
@@ -347,7 +333,7 @@ export function TwoDVisualizer({
         <button
           type="button"
           aria-label="Zoom in"
-          onClick={() => changeZoom(zoom + 0.1)}
+          onClick={() => changeZoomByStep(1)}
         >
           <Plus size={14} />
         </button>

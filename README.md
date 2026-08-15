@@ -74,8 +74,8 @@ npm run pack:win
 npm run dist:win
 ```
 
-Existing installers are retained in `release/`. New builds use version 0.3.1
-and do not overwrite the earlier 0.2.3 or 0.3.0 packages.
+Existing installers are retained in `release/`. New builds use version 0.3.2
+and do not overwrite earlier packages.
 
 ## Project structure
 

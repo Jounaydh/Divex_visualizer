@@ -7,6 +7,10 @@ yet use formal releases.
 
 ### Windows V2 integration
 
+- Made Ctrl+wheel zoom advance in controlled 10-percentage-point steps and
+  preserve the pointer's map location in both Project and Logic views.
+- Anchored toolbar zoom to the current viewport center and removed conflicting
+  scroll-surface size animation that caused bottom-right drift.
 - Integrated the complete crash-containment/IDE feature line into the Windows
   desktop branch.
 - Matched the current Mac/V2 visualization workspace with focused 2D Project
