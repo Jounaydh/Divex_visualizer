@@ -8,6 +8,7 @@ import {
   Minus,
   Plus,
   RefreshCw,
+  ShieldAlert,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,8 +22,10 @@ import type {
 interface SourceControlPanelProps {
   rootPath: string;
   enabled: boolean;
+  trusted: boolean;
   refreshKey: number;
   onOpenFile: (path: string) => void;
+  onTrustWorkspace: () => void;
 }
 
 interface DiffSelection {
@@ -159,8 +162,10 @@ function ChangeGroup({
 export function SourceControlPanel({
   rootPath,
   enabled,
+  trusted,
   refreshKey,
   onOpenFile,
+  onTrustWorkspace,
 }: SourceControlPanelProps) {
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -170,7 +175,7 @@ export function SourceControlPanel({
   const [diff, setDiff] = useState<DiffSelection | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!enabled || !window.divex) {
+    if (!enabled || !trusted || !window.divex) {
       setStatus(null);
       return;
     }
@@ -186,7 +191,7 @@ export function SourceControlPanel({
     } finally {
       setLoading(false);
     }
-  }, [enabled, rootPath]);
+  }, [enabled, rootPath, trusted]);
 
   useEffect(() => {
     void refresh();
@@ -288,6 +293,21 @@ export function SourceControlPanel({
         <GitBranch size={24} />
         <strong>Open a local folder</strong>
         <span>Source control is available for projects on this computer.</span>
+      </div>
+    );
+  }
+
+  if (!trusted) {
+    return (
+      <div className="git-empty-state">
+        <ShieldAlert size={24} />
+        <strong>Source control is restricted</strong>
+        <span>
+          Trust this folder before Divex runs Git commands or project tools.
+        </span>
+        <button type="button" onClick={onTrustWorkspace}>
+          Trust this folder
+        </button>
       </div>
     );
   }

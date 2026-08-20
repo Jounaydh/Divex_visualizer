@@ -78,5 +78,9 @@ contextBridge.exposeInMainWorld("divex", {
     ipcRenderer.invoke("app:get-mini-window-state"),
   setMiniAlwaysOnTop: (args) =>
     ipcRenderer.invoke("app:set-mini-always-on-top", args),
+  getWorkspaceTrust: (args) =>
+    ipcRenderer.invoke("workspace:get-trust", args),
+  setWorkspaceTrust: (args) =>
+    ipcRenderer.invoke("workspace:set-trust", args),
   platform: process.platform,
 });

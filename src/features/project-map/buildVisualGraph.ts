@@ -80,25 +80,45 @@ export function buildVisualGraph(
 
     if (!expandedFiles.has(file.id)) return;
 
+    const symbolsByParent = new Map<string, typeof file.symbols>();
     file.symbols.forEach((symbol) => {
+      const parentId = symbol.parentSymbolId ?? file.id;
+      const siblings = symbolsByParent.get(parentId) ?? [];
+      siblings.push(symbol);
+      symbolsByParent.set(parentId, siblings);
+    });
+    const addSymbol = (
+      symbol: (typeof file.symbols)[number],
+      symbolParentId: string,
+      symbolDepth: number,
+    ) => {
       addNode(
         {
           id: symbol.id,
           label: symbol.name,
-          subtitle: symbol.kind,
+          subtitle:
+            symbol.kind === "column"
+              ? `${symbol.dataType ?? "column"}${symbol.primaryKey ? " · primary key" : ""}`
+              : symbol.kind,
           kind: symbol.kind,
           path: file.path,
-          parentId: file.id,
+          parentId: symbolParentId,
         },
-        depth + 1,
+        symbolDepth,
       );
       edges.push({
-        id: `contains:${file.id}:${symbol.id}`,
-        source: file.id,
+        id: `contains:${symbolParentId}:${symbol.id}`,
+        source: symbolParentId,
         target: symbol.id,
         kind: "contains",
       });
-    });
+      (symbolsByParent.get(symbol.id) ?? []).forEach((child) =>
+        addSymbol(child, symbol.id, symbolDepth + 1),
+      );
+    };
+    (symbolsByParent.get(file.id) ?? []).forEach((symbol) =>
+      addSymbol(symbol, file.id, depth + 1),
+    );
   };
 
   const visitFolder = (

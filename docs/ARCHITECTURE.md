@@ -11,9 +11,11 @@ flowchart LR
   FS["Local project"] --> LOADER["Metadata-first cached loader"]
   FS --> WATCH["Debounced project watcher"]
   FS --> GIT["Constrained Git service"]
+  FS --> TRUST["Exact-folder trust store"]
   LOADER --> MAIN["Electron main process"]
   WATCH --> MAIN
   GIT --> MAIN
+  TRUST --> MAIN
   MAIN --> IPC["Validated preload API"]
   IPC --> APP["React application state"]
   APP --> WORKER["Cancelable analysis worker"]
@@ -43,6 +45,8 @@ electron/
 │                   Debounced supported-file change notifications
 ├── terminal-service.cjs
 │                   Owned PTY sessions, input, resize, exit, and cleanup
+├── workspace-trust.cjs
+│                   Canonical exact-folder trust and private persistence
 └── preload.cjs    Narrow window.divex bridge
 
 src/
@@ -83,6 +87,19 @@ regions and receive explicit props.
 `AnalyzedProject`. Language adapters extract language-specific symbols and
 relationships, but return language-neutral types from `src/types.ts`.
 
+`languages/sql.ts` is the first database provider. It extracts tables and
+columns from project SQL, resolves foreign keys after every file has been
+analyzed, and then links explicit SQL or common Dart database calls to those
+tables. It is intentionally static and read-only: it never accepts credentials,
+opens a network connection, or executes project SQL.
+
+Every analyzed document receives a deterministic content fingerprint. Every
+semantic relationship carries `RelationshipEvidence`: provider, confidence,
+source and target locations, source ranges, document versions, and a concise
+reason. Structural, definition, entry-point, and import edges receive evidence
+while `buildLogicalWorkflowGraph` converts the analyzed model, so no logical
+edge reaches the renderer without an auditable source.
+
 Rendering code must not be added to a language adapter. Language-specific
 parsing conditions must not be added to map components.
 
@@ -115,6 +132,8 @@ memory and only changed contents are read before background graph analysis.
 ### Logic map feature
 
 - `buildLogicalWorkflowGraph.ts` creates the semantic graph and relation counts.
+- Database tables and columns use the same nodes, evidence, layout, filtering,
+  culling, and inspector path as code symbols rather than a parallel renderer.
 - `logicalWorkflowLayout.ts` owns layering, cycle handling, crossing reduction,
   spacing, and obstacle-aware edge routing.
 - `logicalWorkflowPerformance.ts` owns graph thresholds, working-set budgets,
@@ -122,6 +141,8 @@ memory and only changed contents are read before background graph analysis.
 - `LogicalFilterPanel.tsx` owns relationship and protection controls.
 - `LogicalWorkflowVisualizer.tsx` owns the viewport, interaction, culling, and
   rendering.
+- `RelationshipEvidenceCard.tsx` renders selected-edge provenance and exact-line
+  navigation without making the layout or renderer responsible for analysis.
 
 The separation is deliberate: graph meaning, layout math, performance policy,
 controls, and DOM rendering can change independently.
@@ -129,20 +150,20 @@ controls, and DOM rendering can change independently.
 ### Editor, explorer, and inspector
 
 These are isolated feature folders because each will grow into a larger IDE
-subsystem. The editor is dynamically imported; its Ace dependency is in a
+subsystem. The editor is dynamically imported; its Monaco dependency is in a
 separate production chunk and is not required for map-only sessions.
 
-The editor owns one Ace `EditSession` per open path. A session retains its
-buffer and undo manager, while Divex stores its last cursor and scroll
-positions before activating another tab. Clean documents accept refreshed
+The editor owns one URI-backed Monaco text model per open path. A model retains
+its buffer and undo history, while Divex stores its complete editor view state
+before activating another tab. Clean documents accept refreshed
 project contents; dirty documents retain their local buffer until saved or
 explicitly discarded.
 
 `VisualizerWorkspace` keeps the editor subtree mounted after its first use but
-hides it while a map is active. This preserves open sessions without loading
-Ace during map-only startup. `flutterDiagnostics.ts` is a pure parser that
+hides it while a map is active. This preserves open models without loading
+Monaco during map-only startup. `flutterDiagnostics.ts` is a pure parser that
 converts analyzer output into file/line diagnostics before the editor applies
-Ace annotations.
+Monaco markers.
 
 ### Navigation
 
@@ -153,7 +174,7 @@ editor locations.
 
 Navigation results resolve to a path, source line, and optional symbol ID.
 `App.tsx` converts that target into the shared selection model and increments an
-editor reveal key so choosing the same source line twice still refocuses Ace.
+editor reveal key so choosing the same source line twice still refocuses Monaco.
 Moving backward or forward applies a stored snapshot without creating another
 history entry.
 
@@ -238,6 +259,20 @@ always follow this path:
 Project writes must continue to use the root-constrained path resolver. Never
 accept an arbitrary shell string from a React component.
 
+Local projects start untrusted. The main process canonicalizes a workspace with
+`realpath`, hashes that exact path, and persists only the hash and trust time in
+the Electron user-data directory. Parent trust does not flow to children or
+siblings. `WorkspaceTrustStore.requireTrusted` is called inside every IPC that
+can execute project code or an external tool, including terminals, detected
+tasks, active-file runs, Git, Dart formatting, Flutter analysis, and default-app
+launches. React also disables these controls for clarity, but it is not the
+security boundary. Revocation terminates owned terminal sessions.
+
+Both desktop windows use context isolation, renderer sandboxing, disabled Node
+integration, a restrictive Content Security Policy, denied child windows, and
+navigation limited to the Divex renderer. Ordinary web links are handed to the
+operating system instead of loading inside the privileged window.
+
 Crash reports follow the same boundary: the renderer supplies diagnostic text,
 the main process truncates it, adds trusted application metadata, and selects
 the log path.
@@ -250,6 +285,12 @@ selected. Vite also creates stable React, icon, and editor-engine chunks.
 
 This layout keeps startup smaller while allowing feature folders to become
 independent packages or services later.
+
+electron-builder packages the production renderer, Electron services, and
+native `node-pty` prebuilds. Native binaries are unpacked from ASAR. Platform
+installers are configured in `electron-builder.yml`; output is local-only and
+ignored under `release/`. Signing, notarization, publishing, and updates remain
+explicit release operations rather than application runtime behavior.
 
 ## Intended IDE evolution
 

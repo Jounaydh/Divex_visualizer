@@ -29,6 +29,9 @@ export const edgeRenderPriority: Record<LogicalEdgeKind, number> = {
   defines: 4,
   imports: 5,
   uses: 6,
+  reads: 2,
+  writes: 2,
+  references: 3,
   contains: 7,
 };
 

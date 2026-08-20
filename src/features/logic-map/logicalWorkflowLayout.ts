@@ -67,6 +67,9 @@ const RANK_INCREMENT: Record<VisualEdge["kind"], number> = {
   extends: 1,
   implements: 1,
   uses: 1,
+  reads: 1,
+  writes: 1,
+  references: 1,
 };
 
 const edgePriority = (edge: VisualEdge) => {
@@ -75,6 +78,8 @@ const edgePriority = (edge: VisualEdge) => {
   if (edge.kind === "defines") return 2;
   if (edge.kind === "extends" || edge.kind === "implements") return 3;
   if (edge.kind === "uses") return 4;
+  if (edge.kind === "reads" || edge.kind === "writes") return 4;
+  if (edge.kind === "references") return 5;
   if (edge.kind === "imports") return 5;
   return 6;
 };

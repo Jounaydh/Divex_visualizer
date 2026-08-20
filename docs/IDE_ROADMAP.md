@@ -74,7 +74,9 @@ channels, and session restore.
 
 ### Documents and editor
 
-Replace Ace with Monaco and make URI-based document models the source of truth.
+Monaco now provides URI-backed document models, independent tab view state,
+diagnostic markers, and the editor action layer. Continue evolving it into the
+source of truth shared by analysis and language services. Required behavior:
 Required behavior:
 
 - multiple tabs and split editor groups
@@ -220,20 +222,25 @@ and external network use visible to the user.
 
 ### Databases
 
-Begin read-only. Store credentials in the operating-system keychain and model
-connections, schemas, tables, columns, indexes, and foreign keys as graph
-nodes. Later connect ORM models, queries, migrations, and observed reads/writes
-to the semantic graph.
+The first read-only milestone is implemented for project SQL: tables, columns,
+primary and foreign keys, plus static SQL/Dart reads and writes share the
+semantic graph and evidence model. Next, store live-connection credentials in
+the operating-system keychain and add schemas, views, indexes, migrations, ORM
+models, and observed runtime queries. Live providers must remain read-only by
+default and require explicit workspace trust before any query is executed.
 
 ### Security and distribution
 
-Add workspace trust before running project code. Keep Electron context
-isolation, sandboxing, IPC sender validation, navigation restrictions, a strict
-content security policy, and narrow validated IPC methods.
+Workspace trust now blocks project execution and external tools until the exact
+folder is approved, with enforcement in Electron rather than only the UI.
+Context isolation, sandboxing, navigation restrictions, a Content Security
+Policy, and narrow validated IPC methods are also in place. Continue by adding
+formal IPC sender tests, extension permissions, and credential isolation.
 
-Use Electron Forge or the selected Theia packaging pipeline for signed and
-notarized installers, auto-update channels, rollback, settings migrations,
-structured logs, crash recovery, and opt-in privacy-preserving telemetry.
+electron-builder now produces the configured native installer formats. Continue
+with signed and notarized release builds, auto-update channels, rollback,
+settings migrations, structured release logs, and opt-in privacy-preserving
+telemetry.
 
 ## Delivery sequence
 
@@ -273,7 +280,7 @@ testing, and map synchronization are dependable.
 2. Introduce a document service and stop treating the payload array as the
    editable document store.
 3. Complete the Theia proof of concept.
-4. Replace Ace with Monaco.
+4. Add Monaco editor groups, diff views, hot exit, and external-change conflict handling.
 5. Connect Dart LSP diagnostics, completion, definitions, and references.
 6. Replace inferred logical links with LSP/analyzer call and type hierarchy
    evidence.

@@ -10,6 +10,7 @@ const {
 const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { fileURLToPath } = require("node:url");
 const { promisify } = require("node:util");
 const {
   commitGit,
@@ -23,6 +24,7 @@ const {
   createProjectWatcherService,
 } = require("./project-watcher.cjs");
 const { createTerminalService } = require("./terminal-service.cjs");
+const { WorkspaceTrustStore } = require("./workspace-trust.cjs");
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +42,56 @@ const projectWatcherService = createProjectWatcherService();
 let miniWindow = null;
 let miniWindowState = null;
 let miniWindowStateTimer = null;
+let workspaceTrustStore = null;
+
+function getWorkspaceTrustStore() {
+  if (!workspaceTrustStore) {
+    workspaceTrustStore = new WorkspaceTrustStore({
+      storePath: path.join(app.getPath("userData"), "workspace-trust.json"),
+    });
+  }
+  return workspaceTrustStore;
+}
+
+function requireTrustedWorkspace(rootPath) {
+  return getWorkspaceTrustStore().requireTrusted(rootPath);
+}
+
+function isAllowedRendererNavigation(targetUrl) {
+  try {
+    const target = new URL(targetUrl);
+    if (isDevelopment) {
+      const renderer = new URL(
+        process.env.VITE_DEV_SERVER_URL || "http://localhost:5173",
+      );
+      return target.origin === renderer.origin;
+    }
+    return (
+      target.protocol === "file:" &&
+      path.resolve(fileURLToPath(target)) ===
+        path.resolve(__dirname, "..", "dist", "index.html")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function secureRendererNavigation(window) {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const protocol = new URL(url).protocol;
+      if (protocol === "https:" || protocol === "http:") {
+        void shell.openExternal(url);
+      }
+    } catch {
+      // Invalid and non-web URLs remain denied.
+    }
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (!isAllowedRendererNavigation(url)) event.preventDefault();
+  });
+}
 
 function defaultMiniWindowState() {
   return {
@@ -560,6 +612,7 @@ function createWindow() {
     },
   });
 
+  secureRendererNavigation(window);
   attachRendererRecovery(window);
   const terminalOwner = window.webContents;
   terminalOwner.once("destroyed", () => {
@@ -605,6 +658,7 @@ async function createMiniWindow(rootPath) {
       sandbox: true,
     },
   });
+  secureRendererNavigation(miniWindow);
   miniWindow.setAlwaysOnTop(Boolean(state.alwaysOnTop), "floating");
   attachRendererRecovery(miniWindow, rendererQuery);
   miniWindow.on("move", () => scheduleMiniWindowStateSave(miniWindow));
@@ -675,6 +729,48 @@ ipcMain.handle("app:set-mini-always-on-top", async (event, args) => {
       : "Always-on-top turned off.",
     alwaysOnTop,
   };
+});
+
+ipcMain.handle("workspace:get-trust", async (_event, args) => {
+  try {
+    const status = await getWorkspaceTrustStore().get(args?.rootPath);
+    return {
+      success: true,
+      output: status.trusted
+        ? "This workspace is trusted."
+        : "This workspace is open in Restricted Mode.",
+      ...status,
+    };
+  } catch (error) {
+    return {
+      ...toolError(error, "Workspace trust could not be checked."),
+      trusted: false,
+    };
+  }
+});
+
+ipcMain.handle("workspace:set-trust", async (event, args) => {
+  try {
+    const status = await getWorkspaceTrustStore().set(
+      args?.rootPath,
+      Boolean(args?.trusted),
+    );
+    if (!status.trusted) {
+      terminalService.closeOwnerSessions(event.sender);
+    }
+    return {
+      success: true,
+      output: status.trusted
+        ? "Workspace trusted. Project tools are enabled."
+        : "Workspace trust revoked. Project tools are now restricted.",
+      ...status,
+    };
+  } catch (error) {
+    return {
+      ...toolError(error, "Workspace trust could not be changed."),
+      trusted: false,
+    };
+  }
 });
 
 function projectProgressReporter(event) {
@@ -858,6 +954,7 @@ ipcMain.handle("project:copy-entry-path", async (_event, args) => {
 
 ipcMain.handle("project:open-entry", async (_event, args) => {
   try {
+    await requireTrustedWorkspace(args?.rootPath);
     const { resolvedEntry } = resolveMutableProjectEntry(
       args.rootPath,
       args.entryPath,
@@ -875,7 +972,7 @@ ipcMain.handle("project:open-terminal", async (_event, args) => {
     if (!path.isAbsolute(args.rootPath)) {
       throw new Error("Open a local project folder before launching a terminal.");
     }
-    const resolvedRoot = path.resolve(args.rootPath);
+    const resolvedRoot = await requireTrustedWorkspace(args.rootPath);
     let directory = resolvedRoot;
     if (args.entryPath) {
       const { resolvedEntry } = resolveMutableProjectEntry(
@@ -915,7 +1012,7 @@ ipcMain.handle("project:run-task", async (_event, args) => {
     if (!path.isAbsolute(args.rootPath)) {
       throw new Error("Open a local project folder before running a task.");
     }
-    const resolvedRoot = path.resolve(args.rootPath);
+    const resolvedRoot = await requireTrustedWorkspace(args.rootPath);
     const tasks = await detectProjectTasks(resolvedRoot);
     const task = tasks.find((candidate) => candidate.id === args.taskId);
     if (!task) throw new Error("That task is no longer available.");
@@ -934,6 +1031,7 @@ ipcMain.handle("project:run-task", async (_event, args) => {
 
 ipcMain.handle("project:run-file", async (_event, args) => {
   try {
+    await requireTrustedWorkspace(args?.rootPath);
     const { resolvedRoot, resolvedEntry } = resolveMutableProjectEntry(
       args.rootPath,
       args.entryPath,
@@ -961,26 +1059,31 @@ ipcMain.handle("project:run-file", async (_event, args) => {
   }
 });
 
-ipcMain.handle("terminal:create", async (event, args) =>
-  terminalService.create(
-    {
-      rootPath: args?.rootPath,
-      cwd: args?.cwd,
-      cols: args?.cols,
-      rows: args?.rows,
-      title: args?.title || "Terminal",
-      kind: "shell",
-    },
-    event.sender,
-  ),
-);
+ipcMain.handle("terminal:create", async (event, args) => {
+  try {
+    const resolvedRoot = await requireTrustedWorkspace(args?.rootPath);
+    return terminalService.create(
+      {
+        rootPath: resolvedRoot,
+        cwd: args?.cwd,
+        cols: args?.cols,
+        rows: args?.rows,
+        title: args?.title || "Terminal",
+        kind: "shell",
+      },
+      event.sender,
+    );
+  } catch (error) {
+    return toolError(error, "The terminal could not be started.");
+  }
+});
 
 ipcMain.handle("terminal:run-task", async (event, args) => {
   try {
     if (!path.isAbsolute(args?.rootPath)) {
       throw new Error("Open a local project folder before running a task.");
     }
-    const resolvedRoot = path.resolve(args.rootPath);
+    const resolvedRoot = await requireTrustedWorkspace(args.rootPath);
     const tasks = await detectProjectTasks(resolvedRoot);
     const task = tasks.find((candidate) => candidate.id === args.taskId);
     if (!task) throw new Error("That task is no longer available.");
@@ -1004,6 +1107,7 @@ ipcMain.handle("terminal:run-task", async (event, args) => {
 
 ipcMain.handle("terminal:run-file", async (event, args) => {
   try {
+    await requireTrustedWorkspace(args?.rootPath);
     const { resolvedRoot, resolvedEntry } = resolveMutableProjectEntry(
       args?.rootPath,
       args?.entryPath,
@@ -1166,6 +1270,7 @@ ipcMain.handle("project:save-file", async (_event, args) => {
 
 ipcMain.handle("project:format-dart", async (_event, args) => {
   try {
+    await requireTrustedWorkspace(args?.rootPath);
     const filePath = resolveProjectFile(args.rootPath, args.filePath);
     if (path.extname(filePath).toLowerCase() !== ".dart") {
       return { success: false, output: "Dart formatting requires a .dart file." };
@@ -1192,11 +1297,12 @@ ipcMain.handle("project:format-dart", async (_event, args) => {
 
 ipcMain.handle("project:analyze-flutter", async (_event, args) => {
   try {
+    const resolvedRoot = await requireTrustedWorkspace(args?.rootPath);
     const result = await execFileAsync(
       "flutter",
       ["analyze", "--no-pub"],
       {
-        cwd: path.resolve(args.rootPath),
+        cwd: resolvedRoot,
         maxBuffer: 8 * 1024 * 1024,
         timeout: 120000,
       },
@@ -1213,33 +1319,68 @@ ipcMain.handle("project:analyze-flutter", async (_event, args) => {
   }
 });
 
-ipcMain.handle("git:status", async (_event, args) =>
-  getGitStatus(args?.rootPath),
-);
+ipcMain.handle("git:status", async (_event, args) => {
+  try {
+    const rootPath = await requireTrustedWorkspace(args?.rootPath);
+    return getGitStatus(rootPath);
+  } catch (error) {
+    return toolError(error, "Git status could not be loaded.");
+  }
+});
 
-ipcMain.handle("git:diff", async (_event, args) =>
-  getGitDiff(args?.rootPath, args?.filePath, Boolean(args?.staged)),
-);
+ipcMain.handle("git:diff", async (_event, args) => {
+  try {
+    const rootPath = await requireTrustedWorkspace(args?.rootPath);
+    return getGitDiff(rootPath, args?.filePath, Boolean(args?.staged));
+  } catch (error) {
+    return toolError(error, "The Git diff could not be loaded.");
+  }
+});
 
-ipcMain.handle("git:stage", async (_event, args) =>
-  mutateGitPath(args?.rootPath, args?.filePath, "stage"),
-);
+ipcMain.handle("git:stage", async (_event, args) => {
+  try {
+    const rootPath = await requireTrustedWorkspace(args?.rootPath);
+    return mutateGitPath(rootPath, args?.filePath, "stage");
+  } catch (error) {
+    return toolError(error, "The file could not be staged.");
+  }
+});
 
-ipcMain.handle("git:unstage", async (_event, args) =>
-  mutateGitPath(args?.rootPath, args?.filePath, "unstage"),
-);
+ipcMain.handle("git:unstage", async (_event, args) => {
+  try {
+    const rootPath = await requireTrustedWorkspace(args?.rootPath);
+    return mutateGitPath(rootPath, args?.filePath, "unstage");
+  } catch (error) {
+    return toolError(error, "The file could not be unstaged.");
+  }
+});
 
-ipcMain.handle("git:stage-all", async (_event, args) =>
-  mutateAllGit(args?.rootPath, "stage"),
-);
+ipcMain.handle("git:stage-all", async (_event, args) => {
+  try {
+    const rootPath = await requireTrustedWorkspace(args?.rootPath);
+    return mutateAllGit(rootPath, "stage");
+  } catch (error) {
+    return toolError(error, "Changes could not be staged.");
+  }
+});
 
-ipcMain.handle("git:unstage-all", async (_event, args) =>
-  mutateAllGit(args?.rootPath, "unstage"),
-);
+ipcMain.handle("git:unstage-all", async (_event, args) => {
+  try {
+    const rootPath = await requireTrustedWorkspace(args?.rootPath);
+    return mutateAllGit(rootPath, "unstage");
+  } catch (error) {
+    return toolError(error, "Changes could not be unstaged.");
+  }
+});
 
-ipcMain.handle("git:commit", async (_event, args) =>
-  commitGit(args?.rootPath, args?.message),
-);
+ipcMain.handle("git:commit", async (_event, args) => {
+  try {
+    const rootPath = await requireTrustedWorkspace(args?.rootPath);
+    return commitGit(rootPath, args?.message);
+  } catch (error) {
+    return toolError(error, "The commit could not be created.");
+  }
+});
 
 app.whenReady().then(() => {
   createWindow();

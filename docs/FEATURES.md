@@ -15,6 +15,21 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Keeps the browser renderer isolated from Node.js and exposes filesystem and
   process operations through a narrow preload API.
 
+## Workspace trust
+
+- Opens every local folder in Restricted Mode until the user explicitly trusts
+  that exact folder.
+- Keeps safe exploration available while restricted: loading, maps, source
+  reading and editing, search, copy, reveal, and Divex Mini continue to work.
+- Blocks terminals, tasks, active-file runs, external file launches, Git,
+  formatting, and Flutter analysis at both the UI and Electron IPC boundary.
+- Stores trust persistently as a hash of the folder's canonical path, without
+  writing the source path into the trust database.
+- Does not inherit trust from a parent or neighboring folder.
+- Closes active terminal sessions immediately when trust is revoked.
+- Exposes trust and revocation from the File menu and a visible Restricted Mode
+  banner.
+
 ## Project explorer
 
 - Shows folders and supported files in a collapsible tree on the right side of
@@ -133,6 +148,13 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
   - uses
   - imports
   - contains
+- Backs every logical relationship with a provider, confidence level,
+  explanation, source location, target location when known, and source-document
+  fingerprint.
+- Makes routed relationship lines selectable and opens a focused evidence card
+  without disabling normal canvas panning.
+- Opens local evidence at its exact source line in the Divex editor and exposes
+  compact evidence summaries in Inspector relationship cards.
 - Opens with a simpler execution-flow preset and allows every relationship or
   any custom combination.
 - Can fade unrelated cards and links around the selected item.
@@ -143,6 +165,25 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Provides generous blank canvas around the generated graph so the user can
   move the code above, below, left, or right when the logic controls cover part
   of the map.
+
+## Database visualization
+
+- Loads `.sql` files through the same cached, watched project pipeline as source
+  files and edits them with SQL syntax coloring.
+- Parses common SQLite, PostgreSQL, and MySQL-style `CREATE TABLE` declarations
+  without connecting to or modifying a database.
+- Creates first-class database, table, and column cards with types, nullability,
+  primary-key metadata, and source locations.
+- Resolves inline and table-level foreign keys into directed **References**
+  relationships, including cross-file table declarations.
+- Detects explicit SQL `SELECT`, `INSERT`, `UPDATE`, and `DELETE` statements plus
+  common Dart `query`, `insert`, `update`, and `delete` calls.
+- Connects code to discovered tables using evidence-backed **Reads** and
+  **Writes** relationships.
+- Adds a focused **Data flow** preset so database behavior can be inspected
+  without displaying the complete code graph.
+- Shows SQL provider, confidence, exact declaration/query range, and document
+  fingerprint through the relationship evidence card.
 
 ## Large-project protection
 
@@ -185,15 +226,17 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
   connections.
 - Includes a collapsible symbol list for the active file.
 - Navigates between related files and symbols from relationship cards.
+- Shows the analysis provider, confidence, proof location, and document version
+  for detected code relationships.
 - Provides Guided and Advanced modes so beginners start with a simpler
   explanation while experienced developers can inspect more detail.
 
 ## Source editor
 
 - Opens in place of the active map from **View source code**.
-- Uses the open-source Ace editor with line numbers, familiar selection
-  behavior, and syntax coloring.
-- Opens multiple files as tabs and keeps one Ace EditSession per document.
+- Uses the open-source Monaco editor with line numbers, multi-cursor editing,
+  folding, sticky scrolling, suggestions, and syntax coloring.
+- Opens multiple files as tabs and keeps one URI-backed Monaco model per document.
 - Preserves each tab's text buffer, undo history, cursor, and scroll position
   while switching files.
 - Keeps editor sessions mounted when returning temporarily to a visual map.
@@ -205,20 +248,19 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
   or reload.
 - Saves the current document with `Command/Ctrl+S` and can save every dirty
   tab in one action.
-- Adds undo, redo, find, and replace controls backed by Ace commands.
+- Adds undo, redo, find, and replace controls backed by Monaco actions.
 - Shows project/file breadcrumbs and the code symbol containing the cursor.
 - Provides a per-file symbol outline that navigates directly to definitions.
 - Supports font sizing, word wrap, whitespace visibility, and 2/4-space tab
   preferences.
-- Supports Dart, Java, Python, YAML, JSON, Gradle, and properties file modes
-  where Ace provides them.
+- Supports Dart, Java, Python, SQL, YAML, JSON, and plain-text Monaco modes.
 - Saves through validated Electron IPC.
 - Formats Dart files with the locally installed Dart SDK.
 - Runs `flutter analyze --no-pub` for an opened Flutter project and shows the
   command result.
-- Parses Flutter analyzer output into Ace gutter annotations for open files and
+- Parses Flutter analyzer output into Monaco markers for open files and
   reports the project problem count in the editor status bar.
-- Is code-split with the Ace engine so users who only explore maps do not pay
+- Is code-split with the Monaco engine so users who only explore maps do not pay
   the editor startup cost.
 
 ## Integrated terminal and tasks

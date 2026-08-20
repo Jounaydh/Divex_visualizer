@@ -6,16 +6,24 @@ import type {
   ProjectPayload,
 } from "../types";
 import {
-  extractDartImports,
+  extractDartImportLinks,
   extractDartRelationships,
   extractDartSymbols,
   resolveDartImport,
 } from "./languages/dart";
+import { contentVersion } from "./evidence";
+import {
+  extractDatabaseAccessRelationships,
+  extractSqlSchema,
+  resolveSqlForeignKeys,
+  type SqlFileAnalysis,
+} from "./languages/sql";
 
 const extensionKind: Record<string, FileKind> = {
   dart: "dart",
   java: "java",
   py: "python",
+  sql: "sql",
   yaml: "config",
   yml: "config",
   json: "config",
@@ -66,21 +74,27 @@ function buildFolderTree(files: AnalyzedFile[], projectName: string): FolderNode
 
 export function analyzeProject(payload: ProjectPayload): AnalyzedProject {
   const knownPaths = new Set(payload.files.map((file) => file.path));
+  const sqlAnalysisByPath = new Map<string, SqlFileAnalysis>();
   const files: AnalyzedFile[] = payload.files.map((file) => {
     const name = file.path.split("/").at(-1) ?? file.path;
     const extension = name.includes(".") ? name.split(".").at(-1) ?? "" : "";
-    const imports = file.path.endsWith(".dart")
-      ? extractDartImports(file.content)
+    const extractedImportLinks = file.path.endsWith(".dart")
+      ? extractDartImportLinks(file.content)
       : [];
-    const importLinks = imports.map((value) => ({
-      value,
+    const imports = extractedImportLinks.map((link) => link.value);
+    const importLinks = extractedImportLinks.map((link) => ({
+      ...link,
       targetPath:
-        resolveDartImport(file.path, value, payload.name, knownPaths) ??
+        resolveDartImport(file.path, link.value, payload.name, knownPaths) ??
         undefined,
     }));
     const resolvedImports = importLinks
       .map((link) => link.targetPath)
       .filter((value): value is string => Boolean(value));
+    const sqlAnalysis = extractSqlSchema(file.path, file.content);
+    if (file.path.toLowerCase().endsWith(".sql")) {
+      sqlAnalysisByPath.set(file.path, sqlAnalysis);
+    }
 
     return {
       ...file,
@@ -91,12 +105,19 @@ export function analyzeProject(payload: ProjectPayload): AnalyzedProject {
       imports,
       importLinks,
       resolvedImports,
-      symbols: extractDartSymbols(file.path, file.content),
+      symbols: file.path.endsWith(".dart")
+        ? extractDartSymbols(file.path, file.content)
+        : sqlAnalysis.symbols,
       lineCount: file.content.split("\n").length,
+      documentVersion: contentVersion(file.content),
     };
   });
 
-  const relationships = extractDartRelationships(files);
+  const relationships = [
+    ...extractDartRelationships(files),
+    ...resolveSqlForeignKeys(files, sqlAnalysisByPath),
+    ...extractDatabaseAccessRelationships(files),
+  ];
   const importRelationshipCount = files.reduce(
     (total, file) => total + file.imports.length,
     0,
@@ -109,5 +130,8 @@ export function analyzeProject(payload: ProjectPayload): AnalyzedProject {
     files,
     relationships,
     relationshipCount: importRelationshipCount + relationships.length,
+    documentVersion: contentVersion(
+      files.map((file) => `${file.path}:${file.documentVersion}`).join("\n"),
+    ),
   };
 }

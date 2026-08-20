@@ -3,6 +3,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   ClipboardPaste,
+  Database,
   ExternalLink,
   FileCode2,
   FileJson2,
@@ -37,6 +38,7 @@ interface FileExplorerProps {
   root: FolderNode;
   selectedId: string | null;
   canUseNativePaths: boolean;
+  canExecuteProject: boolean;
   canShare: boolean;
   hasClipboard: boolean;
   onSelectFile: (file: AnalyzedFile) => void;
@@ -62,6 +64,7 @@ interface ContextMenuState {
 
 function FileIcon({ file }: { file: AnalyzedFile }) {
   if (file.kind === "config") return <FileJson2 size={14} />;
+  if (file.kind === "sql") return <Database size={14} />;
   return <FileCode2 size={14} />;
 }
 
@@ -170,6 +173,7 @@ export function FileExplorer({
   root,
   selectedId,
   canUseNativePaths,
+  canExecuteProject,
   canShare,
   hasClipboard,
   onSelectFile,
@@ -348,7 +352,7 @@ export function FileExplorer({
               onClick={() =>
                 runAction(() => onOpenExternal(contextMenu.entry))
               }
-              disabled={!canUseNativePaths}
+              disabled={!canUseNativePaths || !canExecuteProject}
             >
               <ExternalLink size={14} />
               Open in Default App
@@ -372,7 +376,7 @@ export function FileExplorer({
             onClick={() =>
               runAction(() => onOpenTerminal(contextMenu.entry))
             }
-            disabled={!canUseNativePaths}
+            disabled={!canUseNativePaths || !canExecuteProject}
           >
             <SquareTerminal size={14} />
             Open in Terminal

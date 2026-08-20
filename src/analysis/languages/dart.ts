@@ -3,16 +3,31 @@ import type {
   CodeRelationship,
   CodeSymbol,
 } from "../../types";
+import { fileLocation } from "../evidence";
 
 const describeSymbol = (kind: CodeSymbol["kind"], name: string) => {
   const noun = kind === "widget" ? "Flutter widget" : kind;
   return `${name} is a ${noun} defined in this file. Select it to inspect its code and relationships.`;
 };
 
+export function extractDartImportLinks(content: string) {
+  const lines = content.split("\n");
+  return lines.flatMap((lineContent, index) => {
+    const match = lineContent.match(/^\s*import\s+['"]([^'"]+)['"]/);
+    if (!match) return [];
+    const value = match[1];
+    const valueIndex = lineContent.indexOf(value);
+    return [{
+      value,
+      line: index + 1,
+      column: valueIndex + 1,
+      endColumn: valueIndex + value.length + 1,
+    }];
+  });
+}
+
 export function extractDartImports(content: string) {
-  return [...content.matchAll(/^\s*import\s+['"]([^'"]+)['"]/gm)].map(
-    (match) => match[1],
-  );
+  return extractDartImportLinks(content).map((link) => link.value);
 }
 
 export function extractDartSymbols(
@@ -65,7 +80,9 @@ export function extractDartSymbols(
         kind,
         signature: line.trim().replace(/\s*\{$/, ""),
         line: index + 1,
+        column: line.search(/\S/) + 1,
         endLine: findEndLine(index),
+        endColumn: (lines[findEndLine(index) - 1] ?? line).length + 1,
         description: describeSymbol(kind, classMatch[1]),
       });
       return;
@@ -85,7 +102,9 @@ export function extractDartSymbols(
         kind,
         signature: line.trim().replace(/\s*(?:async\s*)?\{.*$/, ""),
         line: index + 1,
+        column: line.search(/\S/) + 1,
         endLine: findEndLine(index),
+        endColumn: (lines[findEndLine(index) - 1] ?? line).length + 1,
         description: describeSymbol(kind, name),
       });
     }
@@ -124,12 +143,28 @@ const DART_CONTROL_WORDS = new Set([
   "while",
 ]);
 
+function dartIdentifierIndex(line: string, name: string) {
+  let searchFrom = 0;
+  while (searchFrom < line.length) {
+    const index = line.indexOf(name, searchFrom);
+    if (index < 0) return -1;
+    const before = index > 0 ? line[index - 1] : "";
+    const after = line[index + name.length] ?? "";
+    if (!/[\w$]/.test(before) && !/[\w$]/.test(after)) return index;
+    searchFrom = index + 1;
+  }
+  return -1;
+}
+
 const relationVerb: Record<CodeRelationship["kind"], string> = {
   calls: "calls",
   creates: "creates",
   extends: "inherits behavior from",
   implements: "implements",
   uses: "uses",
+  reads: "reads from",
+  writes: "writes to",
+  references: "references",
 };
 
 function stripDartCommentsAndStrings(content: string) {
@@ -155,6 +190,9 @@ export function extractDartRelationships(
   const fileByPath = new Map(dartFiles.map((file) => [file.path, file]));
   const fileBySymbolId = new Map<string, AnalyzedFile>();
   const symbolsByName = new Map<string, CodeSymbol[]>();
+  const linesByPath = new Map(
+    dartFiles.map((file) => [file.path, file.content.split("\n")]),
+  );
   dartFiles.forEach((file) => {
     file.symbols.forEach((symbol) => {
       fileBySymbolId.set(symbol.id, file);
@@ -196,6 +234,11 @@ export function extractDartRelationships(
     const linkedTargets = linkedTargetIdsBySource.get(source.id) ?? new Set();
     linkedTargets.add(targetId);
     linkedTargetIdsBySource.set(source.id, linkedTargets);
+    const targetFile = target ? fileBySymbolId.get(target.id) : undefined;
+    const confidenceDetail =
+      confidence === "exact"
+        ? "Matched one accessible Dart declaration."
+        : "Inferred from source syntax because a unique declaration could not be proven.";
     relationships.push({
       id: `logic:${key}`,
       sourceId: source.id,
@@ -213,6 +256,43 @@ export function extractDartRelationships(
         targetName,
         kind,
       ),
+      evidence: {
+        provider: "dart-parser",
+        confidence,
+        source: fileLocation(
+          sourceFile,
+          (() => {
+            const sourceLine = linesByPath.get(sourceFile.path)?.[line - 1] ?? "";
+            const tokenIndex = dartIdentifierIndex(sourceLine, targetName);
+            const startColumn = tokenIndex >= 0 ? tokenIndex + 1 : 1;
+            return {
+              startLine: line,
+              startColumn,
+              endLine: line,
+              endColumn:
+                tokenIndex >= 0
+                  ? startColumn + targetName.length
+                  : sourceLine.length + 1,
+            };
+          })(),
+          source.id,
+        ),
+        target: target && targetFile
+          ? fileLocation(
+              targetFile,
+              {
+                startLine: target.line,
+                startColumn: target.column,
+                endLine: target.endLine,
+                endColumn: target.endColumn,
+              },
+              target.id,
+            )
+          : targetPath
+            ? { uri: targetPath }
+            : undefined,
+        detail: `${confidenceDetail} The lightweight Dart provider classified this as “${kind}”.`,
+      },
     });
   };
 

@@ -5,6 +5,7 @@ const supportedExtensions = new Set([
   ".dart",
   ".java",
   ".py",
+  ".sql",
   ".yaml",
   ".yml",
   ".json",

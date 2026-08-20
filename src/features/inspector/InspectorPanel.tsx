@@ -13,6 +13,8 @@ import { useEffect, useState } from "react";
 import type {
   AnalyzedFile,
   AnalyzedProject,
+  EvidenceProvider,
+  RelationshipEvidence,
   VisualNode,
 } from "../../types";
 
@@ -29,6 +31,36 @@ interface InspectorPanelProps {
 
 function relationshipExplanation(source: AnalyzedFile, target: AnalyzedFile) {
   return `${source.name} imports ${target.name} so it can use code defined there.`;
+}
+
+const evidenceProviderLabel: Record<EvidenceProvider, string> = {
+  "workspace-index": "Workspace index",
+  "dart-parser": "Dart static analysis",
+  "dart-import-resolver": "Dart import resolver",
+  "entry-point-detector": "Entry-point detector",
+  "sql-schema-parser": "SQL schema parser",
+  "sql-query-parser": "SQL query parser",
+  "dart-database-detector": "Dart database detector",
+};
+
+function EvidenceSummary({ evidence }: { evidence: RelationshipEvidence }) {
+  const sourceLine = evidence.source.range?.startLine;
+  return (
+    <div className="inspector-evidence-summary">
+      <span>
+        {evidenceProviderLabel[evidence.provider]} · {evidence.confidence}
+      </span>
+      <code>
+        {evidence.source.uri}
+        {sourceLine ? `:${sourceLine}` : ""}
+      </code>
+      {evidence.source.documentVersion && (
+        <small>
+          version {evidence.source.documentVersion.replace(/^fnv1a-/, "")}
+        </small>
+      )}
+    </div>
+  );
 }
 
 export function InspectorPanel({
@@ -107,7 +139,13 @@ export function InspectorPanel({
               <Braces size={16} />
             )}
           </div>
-          <span>{selectedSymbol ? "Code logic" : "File properties"}</span>
+          <span>
+            {selectedSymbol
+              ? selectedSymbol.kind === "table" || selectedSymbol.kind === "column"
+                ? "Database schema"
+                : "Code logic"
+              : "File properties"}
+          </span>
         </div>
         <button type="button" className="icon-button" onClick={onClose}>
           <X size={16} />
@@ -144,6 +182,46 @@ export function InspectorPanel({
             {showCode ? "Close code editor" : "View source code"}
             <ExternalLink size={13} />
           </button>
+
+          {selectedSymbol &&
+            (selectedSymbol.kind === "table" || selectedSymbol.kind === "column") && (
+              <section className="inspector-section database-details">
+                <div className="section-label">
+                  <Network size={14} />
+                  <span>Database details</span>
+                </div>
+                <dl>
+                  <div>
+                    <dt>Entity</dt>
+                    <dd>{selectedSymbol.kind}</dd>
+                  </div>
+                  {selectedSymbol.dataType && (
+                    <div>
+                      <dt>Type</dt>
+                      <dd>{selectedSymbol.dataType}</dd>
+                    </div>
+                  )}
+                  {selectedSymbol.kind === "column" && (
+                    <>
+                      <div>
+                        <dt>Nullable</dt>
+                        <dd>{selectedSymbol.nullable ? "Yes" : "No"}</dd>
+                      </div>
+                      <div>
+                        <dt>Primary key</dt>
+                        <dd>{selectedSymbol.primaryKey ? "Yes" : "No"}</dd>
+                      </div>
+                    </>
+                  )}
+                  {selectedSymbol.kind === "table" && (
+                    <div>
+                      <dt>Columns</dt>
+                      <dd>{definedSymbols.length}</dd>
+                    </div>
+                  )}
+                </dl>
+              </section>
+            )}
 
           {selectedSymbol && (
             <section className="inspector-section">
@@ -236,9 +314,7 @@ export function InspectorPanel({
                         </span>
                         <em>{connection.kind}</em>
                         <p>{connection.explanation}</p>
-                        {connection.confidence === "inferred" && (
-                          <small>Inferred by static analysis</small>
-                        )}
+                        <EvidenceSummary evidence={connection.evidence} />
                       </button>
                     );
                   })}
@@ -307,7 +383,9 @@ export function InspectorPanel({
               onClick={() => setSymbolsOpen((open) => !open)}
             >
               <Braces size={14} />
-              <span>Functions &amp; symbols</span>
+              <span>
+                {selectedFile.kind === "sql" ? "Tables & columns" : "Functions & symbols"}
+              </span>
               <small>{selectedFile.symbols.length}</small>
               <ChevronDown
                 className={symbolsOpen ? "chevron-open" : ""}

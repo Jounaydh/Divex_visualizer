@@ -9,12 +9,14 @@ import {
 } from "react";
 import type {
   AnalyzedProject,
+  VisualEdge,
   VisualNode,
   WorkflowDirection,
   WorkflowPosition,
 } from "../../types";
 import {
   buildLogicalWorkflowGraph,
+  DATABASE_EDGE_KINDS,
   LOGICAL_EDGE_KINDS,
   type LogicalEdgeKind,
 } from "./buildLogicalWorkflowGraph";
@@ -39,6 +41,7 @@ import {
   type LogicalViewport,
 } from "./logicalWorkflowPerformance";
 import { WorkflowNode } from "../../components/WorkflowNode";
+import { RelationshipEvidenceCard } from "./RelationshipEvidenceCard";
 
 interface LogicalWorkflowVisualizerProps {
   project: AnalyzedProject;
@@ -52,6 +55,7 @@ interface LogicalWorkflowVisualizerProps {
     positions: Record<string, WorkflowPosition>,
   ) => void;
   onSelectNode: (node: VisualNode) => void;
+  onOpenEvidenceLocation?: (path: string, line: number) => void;
   autoFocusOnLayout?: boolean;
   defaultFiltersOpen?: boolean;
 }
@@ -70,6 +74,7 @@ export function LogicalWorkflowVisualizer({
   onZoomChange,
   onCustomPositionsChange,
   onSelectNode,
+  onOpenEvidenceLocation,
   autoFocusOnLayout = true,
   defaultFiltersOpen = true,
 }: LogicalWorkflowVisualizerProps) {
@@ -85,6 +90,7 @@ export function LogicalWorkflowVisualizer({
   );
   const [filtersOpen, setFiltersOpen] = useState(defaultFiltersOpen);
   const [focusConnections, setFocusConnections] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [fullGraphProjectKey, setFullGraphProjectKey] = useState<
     string | null
   >(null);
@@ -134,6 +140,14 @@ export function LogicalWorkflowVisualizer({
   );
   const visibleEdges = scopedGraph.edges;
   const visibleNodes = scopedGraph.nodes;
+  const selectedEdge = useMemo(
+    () => graph.edges.find((edge) => edge.id === selectedEdgeId) ?? null,
+    [graph.edges, selectedEdgeId],
+  );
+  const nodeById = useMemo(
+    () => new Map(graph.nodes.map((node) => [node.id, node])),
+    [graph.nodes],
+  );
   const layout = useMemo(
     () =>
       profileLogicalOperation("Automatic layout", () =>
@@ -370,6 +384,16 @@ export function LogicalWorkflowVisualizer({
     });
   };
 
+  const focusEvidenceNode = (nodeId: string) => {
+    const node = nodeById.get(nodeId);
+    if (node) onSelectNode(node);
+    focusNode(nodeId);
+  };
+
+  const selectEvidenceEdge = (edge: VisualEdge) => {
+    setSelectedEdgeId(edge.id);
+  };
+
   return (
     <div
       className={`logical-workflow-view ${
@@ -396,6 +420,9 @@ export function LogicalWorkflowVisualizer({
         onShowExecution={() =>
           setVisibleKinds(new Set(EXECUTION_EDGE_KINDS))
         }
+        onShowDatabaseFlow={() =>
+          setVisibleKinds(new Set(DATABASE_EDGE_KINDS))
+        }
         onShowEveryRelationship={() =>
           setVisibleKinds(new Set(LOGICAL_EDGE_KINDS))
         }
@@ -407,6 +434,17 @@ export function LogicalWorkflowVisualizer({
           )
         }
       />
+
+      {selectedEdge && (
+        <RelationshipEvidenceCard
+          edge={selectedEdge}
+          sourceNode={nodeById.get(selectedEdge.source)}
+          targetNode={nodeById.get(selectedEdge.target)}
+          onClose={() => setSelectedEdgeId(null)}
+          onFocusNode={focusEvidenceNode}
+          onOpenLocation={onOpenEvidenceLocation}
+        />
+      )}
 
       <div
         className={`two-d-scroll logical-scroll ${
@@ -430,7 +468,7 @@ export function LogicalWorkflowVisualizer({
         onPointerDown={(event) => {
           if (
             event.button !== 0 ||
-            (event.target as HTMLElement).closest("button")
+            (event.target as HTMLElement).closest("button, [data-edge-interactive]")
           ) {
             return;
           }
@@ -503,7 +541,7 @@ export function LogicalWorkflowVisualizer({
                   width: lineViewport.width,
                   height: lineViewport.height,
                 }}
-                aria-hidden="true"
+                aria-label="Code relationships. Select a line to inspect its evidence."
               >
                 <defs>
                   <marker
@@ -535,12 +573,29 @@ export function LogicalWorkflowVisualizer({
                       key={edge.id}
                       className={`logical-edge relation-${edge.kind} ${
                         highlighted ? "highlighted" : "muted"
-                      }`}
+                      } ${selectedEdgeId === edge.id ? "selected" : ""}`}
                     >
                       <path
                         d={route.path}
                         markerEnd="url(#logical-arrow)"
                       />
+                      <path
+                        className="logical-edge-hit-target"
+                        data-edge-interactive="true"
+                        d={route.path}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`Inspect ${edge.kind} relationship evidence`}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={() => selectEvidenceEdge(edge)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          selectEvidenceEdge(edge);
+                        }}
+                      >
+                        <title>{`Inspect evidence: ${edge.explanation ?? edge.label ?? edge.kind}`}</title>
+                      </path>
                       {(edge.kind === "starts" || directlyRelated) && (
                         <text x={route.label.x} y={route.label.y}>
                           {edge.label}

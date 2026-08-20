@@ -5,6 +5,32 @@ yet use formal releases.
 
 ## Unreleased
 
+### Workspace trust and distribution
+
+- Added persistent exact-folder Workspace Trust with a Restricted Mode banner,
+  explicit trust/revoke confirmation, and hashed canonical-path storage.
+- Kept safe exploration and editing available while enforcing terminals,
+  tasks, run commands, external opens, Git, formatting, and analysis inside the
+  Electron IPC boundary.
+- Added terminal shutdown on revocation, CSP protection, denied child windows,
+  and renderer navigation restrictions.
+- Added electron-builder targets for macOS DMG/ZIP, Windows NSIS/ZIP, and Linux
+  AppImage/DEB with unpacked `node-pty` native assets.
+- Added a Divex application icon, MIT license, local-only release output,
+  cross-platform packaging commands, distribution documentation, and trust
+  tests.
+
+### Monaco editor
+
+- Replaced Ace with Monaco 0.56 and URI-backed text models.
+- Preserved multi-tab buffers, undo history, cursor and scroll view state,
+  save flows, symbol navigation, Dart formatting, and Flutter diagnostics.
+- Added dedicated editor and JSON worker routing without bundling unused
+  CSS, HTML, or TypeScript language-service workers.
+- Kept the editor lazy-loaded so map-only and Divex Mini startup stay light.
+- Added tested Dart, Java, Python, SQL, JSON, YAML, and plain-text language
+  mapping.
+
 ### Divex Mini companion
 
 - Added a separate compact renderer containing only the 2D and Logic maps.
@@ -43,6 +69,24 @@ yet use formal releases.
 - Added layered graph placement, crossing reduction, cycle handling, and
   obstacle-aware orthogonal routing.
 - Added free vertical and horizontal canvas movement around the complete map.
+- Added versioned evidence to every logical edge, including provider,
+  confidence, explanation, source proof, and target definition when known.
+- Made routed lines keyboard- and pointer-selectable with an evidence card,
+  document fingerprints, node focus, and exact-line editor navigation.
+- Added evidence summaries to Inspector relationship cards and deterministic
+  evidence fixtures covering imports, calls, locations, and version changes.
+
+### Database visualization
+
+- Added watched `.sql` project loading and SQL syntax coloring.
+- Added read-only schema extraction for tables, columns, types, nullability,
+  primary keys, and inline or table-level foreign keys.
+- Added database, table, and column graph cards plus Reads, Writes, and
+  References relationships.
+- Added common SQL statement and Dart database API detection with versioned
+  source evidence and exact-line navigation.
+- Added a focused Data flow preset, database Inspector details, demo schema, and
+  deterministic database-analysis fixtures.
 
 ### Large-project stability
 
@@ -56,7 +100,8 @@ yet use formal releases.
 
 ### Source and desktop tools
 
-- Integrated the open-source Ace editor with syntax coloring.
+- Added the original syntax-colored editor, later replaced by Monaco in this
+  same development line.
 - Added file saving, Dart formatting, and Flutter analysis.
 - Added symbol navigation in the inspector.
 - Added common explorer file operations.
@@ -70,7 +115,7 @@ yet use formal releases.
   and rendering.
 - Kept shared components small and cross-feature.
 - Lazy-loaded both the logic map and source editor.
-- Split React, icons, and the Ace engine into cacheable production chunks.
+- Split React, icons, and the editor engine into cacheable production chunks.
 - Added architecture, feature, performance, testing, status, history, and IDE
   roadmap documentation.
 
@@ -104,7 +149,7 @@ yet use formal releases.
 - Added a unified project navigation and command palette.
 - Added fuzzy file and symbol lookup plus workspace text search.
 - Added selected-definition and incoming-reference navigation.
-- Added exact-line source reveal in the Ace editor.
+- Added exact-line source reveal in the source editor, now backed by Monaco.
 - Added title-bar back and forward controls with bounded location history.
 - Added keyboard shortcuts for files, commands, symbols, text, and history.
 - Added navigation index and history tests.
@@ -135,10 +180,10 @@ yet use formal releases.
 - Added terminal service tests and native runtime validation.
 - Added a clean-install helper for node-pty's macOS spawn-helper permission.
 
-### Editor workspace upgrade
+### Editor workspace foundation
 
-- Replaced the single replaceable editor buffer with persistent per-file Ace
-  EditSessions.
+- Replaced the single replaceable editor buffer with persistent per-file editor
+  documents, now implemented as Monaco models.
 - Added multi-file tabs with independent buffers, undo, cursor, and scroll
   state.
 - Preserved editor sessions while moving between source view and visual maps.
@@ -150,5 +195,4 @@ yet use formal releases.
 - Kept Explorer file selection inside the editor while source view is active.
 - Added Flutter analyzer diagnostic parsing, gutter annotations, problem
   counts, and parser tests.
-- Fixed destroyed Ace session reuse exposed by React development lifecycle
-  verification.
+- Preserved document state through React development lifecycle verification.

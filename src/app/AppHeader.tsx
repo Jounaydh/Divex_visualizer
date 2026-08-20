@@ -8,6 +8,8 @@ import {
   PanelTopOpen,
   Play,
   Search,
+  ShieldAlert,
+  ShieldCheck,
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
@@ -25,6 +27,7 @@ interface AppHeaderProps {
   hasTerminalSessions: boolean;
   hasActiveTerminal: boolean;
   activeTerminalRunning: boolean;
+  workspaceTrustState: "demo" | "checking" | "trusted" | "restricted";
   canGoBack: boolean;
   canGoForward: boolean;
   onToggleFileMenu: () => void;
@@ -32,6 +35,7 @@ interface AppHeaderProps {
   onCloseMenus: () => void;
   onOpenProject: () => void;
   onOpenMini: () => void;
+  onToggleWorkspaceTrust: () => void;
   onNewTerminal: () => void;
   onOpenExternalTerminal: () => void;
   onShowTerminal: () => void;
@@ -55,6 +59,7 @@ export function AppHeader({
   hasTerminalSessions,
   hasActiveTerminal,
   activeTerminalRunning,
+  workspaceTrustState,
   canGoBack,
   canGoForward,
   onToggleFileMenu,
@@ -62,6 +67,7 @@ export function AppHeader({
   onCloseMenus,
   onOpenProject,
   onOpenMini,
+  onToggleWorkspaceTrust,
   onNewTerminal,
   onOpenExternalTerminal,
   onShowTerminal,
@@ -143,6 +149,29 @@ export function AppHeader({
                   <PanelTopOpen size={14} />
                   <span>Open Divex Mini</span>
                 </button>
+                {workspaceTrustState !== "demo" && (
+                  <>
+                    <div className="header-menu-separator" />
+                    <button
+                      type="button"
+                      disabled={workspaceTrustState === "checking"}
+                      onClick={() => runAndClose(onToggleWorkspaceTrust)}
+                    >
+                      {workspaceTrustState === "trusted" ? (
+                        <ShieldCheck size={14} />
+                      ) : (
+                        <ShieldAlert size={14} />
+                      )}
+                      <span>
+                        {workspaceTrustState === "trusted"
+                          ? "Revoke Workspace Trust"
+                          : workspaceTrustState === "checking"
+                            ? "Checking Workspace Trust…"
+                            : "Trust Workspace…"}
+                      </span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

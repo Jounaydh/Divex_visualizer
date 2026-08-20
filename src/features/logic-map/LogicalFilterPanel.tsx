@@ -24,6 +24,7 @@ interface LogicalFilterPanelProps {
   onToggleFocus: () => void;
   onToggleKind: (kind: LogicalEdgeKind) => void;
   onShowExecution: () => void;
+  onShowDatabaseFlow: () => void;
   onShowEveryRelationship: () => void;
   onTogglePerformanceMode: () => void;
 }
@@ -46,6 +47,7 @@ export function LogicalFilterPanel({
   onToggleFocus,
   onToggleKind,
   onShowExecution,
+  onShowDatabaseFlow,
   onShowEveryRelationship,
   onTogglePerformanceMode,
 }: LogicalFilterPanelProps) {
@@ -66,8 +68,8 @@ export function LogicalFilterPanel({
       {filtersOpen && (
         <>
           <p>
-            Execution flow stays focused by default. Turn on definitions or
-            imports when you need the surrounding architecture.
+            Execution flow stays focused by default. Use Data flow for tables,
+            keys, reads, and writes.
           </p>
           {isLargeGraph && (
             <div className="logical-performance-notice">
@@ -147,6 +149,9 @@ export function LogicalFilterPanel({
           <div className="logical-presets">
             <button type="button" onClick={onShowExecution}>
               Execution flow
+            </button>
+            <button type="button" onClick={onShowDatabaseFlow}>
+              Data flow
             </button>
             <button type="button" onClick={onShowEveryRelationship}>
               Every relationship

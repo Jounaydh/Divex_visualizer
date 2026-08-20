@@ -42,6 +42,7 @@ interface VisualizerWorkspaceProps {
   logicPositions: Readonly<Record<string, WorkflowPosition>>;
   expandedFolders: Set<string>;
   expandedFiles: Set<string>;
+  workspaceTrusted: boolean;
   onChangeView: (mode: ViewMode) => void;
   onChangeExperience: (mode: ExperienceMode) => void;
   onChangeWorkflowDirection: (direction: WorkflowDirection) => void;
@@ -50,6 +51,7 @@ interface VisualizerWorkspaceProps {
   onFullscreenError: (message: string) => void;
   onShowVisualizer: () => void;
   onOpenEditorFile: (path: string) => void;
+  onOpenEditorLocation: (path: string, line: number) => void;
   onSelectNode: (node: VisualNode) => void;
   onToggleFolderFreely: (id: string) => void;
   onToggleFileFreely: (id: string) => void;
@@ -97,6 +99,7 @@ export function VisualizerWorkspace({
   logicPositions,
   expandedFolders,
   expandedFiles,
+  workspaceTrusted,
   onChangeView,
   onChangeExperience,
   onChangeWorkflowDirection,
@@ -105,6 +108,7 @@ export function VisualizerWorkspace({
   onFullscreenError,
   onShowVisualizer,
   onOpenEditorFile,
+  onOpenEditorLocation,
   onSelectNode,
   onToggleFolderFreely,
   onToggleFileFreely,
@@ -241,6 +245,7 @@ export function VisualizerWorkspace({
                     rootPath={project.rootPath}
                     revealLine={editorRevealLine}
                     revealKey={editorRevealKey}
+                    workspaceTrusted={workspaceTrusted}
                     onClose={onShowVisualizer}
                     onSelectFile={onOpenEditorFile}
                     onPersist={onPersistFile}
@@ -259,6 +264,7 @@ export function VisualizerWorkspace({
                     onZoomChange={onLogicZoomChange}
                     onCustomPositionsChange={onLogicPositionsChange}
                     onSelectNode={selectNode}
+                    onOpenEvidenceLocation={onOpenEditorLocation}
                   />
                 ) : (
                   <TwoDVisualizer

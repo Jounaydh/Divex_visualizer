@@ -49,6 +49,10 @@ async function createProject() {
   await writeFile(join(rootPath, "lib", "a.dart"), "void a() {}\n");
   await writeFile(join(rootPath, "lib", "b.dart"), "void b() {}\n");
   await writeFile(
+    join(rootPath, "schema.sql"),
+    "CREATE TABLE dives (id INTEGER PRIMARY KEY);\n",
+  );
+  await writeFile(
     join(rootPath, "node_modules", "ignored", "hidden.dart"),
     "void hidden() {}\n",
   );
@@ -64,13 +68,14 @@ describe("project loader", () => {
     });
 
     expect(project.files.map((file) => file.path)).toEqual([
+      "schema.sql",
       "lib/a.dart",
       "lib/b.dart",
     ]);
     expect(project.loadSummary).toMatchObject({
-      totalFiles: 2,
+      totalFiles: 3,
       cachedFiles: 0,
-      readFiles: 2,
+      readFiles: 3,
     });
     expect(phases).toContain("scanning");
     expect(phases).toContain("reading");
@@ -82,7 +87,7 @@ describe("project loader", () => {
 
     const cached = await loadProject(rootPath);
     expect(cached.loadSummary).toMatchObject({
-      cachedFiles: 2,
+      cachedFiles: 3,
       readFiles: 0,
     });
 
@@ -92,7 +97,7 @@ describe("project loader", () => {
     );
     const changed = await loadProject(rootPath);
     expect(changed.loadSummary).toMatchObject({
-      cachedFiles: 1,
+      cachedFiles: 2,
       readFiles: 1,
     });
     expect(

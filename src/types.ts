@@ -15,6 +15,7 @@ export type FileKind =
   | "dart"
   | "java"
   | "python"
+  | "sql"
   | "config"
   | "folder"
   | "unknown";
@@ -25,7 +26,10 @@ export type SymbolKind =
   | "constructor"
   | "function"
   | "method"
-  | "variable";
+  | "variable"
+  | "database"
+  | "table"
+  | "column";
 
 export type LogicalRelationKind =
   | "starts"
@@ -35,7 +39,10 @@ export type LogicalRelationKind =
   | "creates"
   | "extends"
   | "implements"
-  | "uses";
+  | "uses"
+  | "reads"
+  | "writes"
+  | "references";
 
 export interface ProjectFile {
   path: string;
@@ -84,9 +91,47 @@ export interface CodeSymbol {
   kind: SymbolKind;
   signature: string;
   line: number;
+  column: number;
   endLine: number;
+  endColumn: number;
   parentSymbolId?: string;
   description: string;
+  dataType?: string;
+  nullable?: boolean;
+  primaryKey?: boolean;
+}
+
+export type RelationshipConfidence = "exact" | "inferred";
+
+export type EvidenceProvider =
+  | "workspace-index"
+  | "dart-parser"
+  | "dart-import-resolver"
+  | "entry-point-detector"
+  | "sql-schema-parser"
+  | "sql-query-parser"
+  | "dart-database-detector";
+
+export interface SourceRange {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+}
+
+export interface EvidenceLocation {
+  uri: string;
+  range?: SourceRange;
+  symbolId?: string;
+  documentVersion?: string;
+}
+
+export interface RelationshipEvidence {
+  provider: EvidenceProvider;
+  confidence: RelationshipConfidence;
+  source: EvidenceLocation;
+  target?: EvidenceLocation;
+  detail: string;
 }
 
 export interface CodeRelationship {
@@ -98,8 +143,9 @@ export interface CodeRelationship {
   targetName: string;
   kind: Exclude<LogicalRelationKind, "starts" | "defines" | "imports">;
   line: number;
-  confidence: "exact" | "inferred";
+  confidence: RelationshipConfidence;
   explanation: string;
+  evidence: RelationshipEvidence;
 }
 
 export interface AnalyzedFile extends ProjectFile {
@@ -111,10 +157,14 @@ export interface AnalyzedFile extends ProjectFile {
   importLinks: Array<{
     value: string;
     targetPath?: string;
+    line: number;
+    column: number;
+    endColumn: number;
   }>;
   resolvedImports: string[];
   symbols: CodeSymbol[];
   lineCount: number;
+  documentVersion: string;
 }
 
 export interface FolderNode {
@@ -132,6 +182,7 @@ export interface AnalyzedProject {
   files: AnalyzedFile[];
   relationships: CodeRelationship[];
   relationshipCount: number;
+  documentVersion: string;
 }
 
 export type VisualNodeKind =
@@ -160,12 +211,18 @@ export interface VisualEdge {
   label?: string;
   explanation?: string;
   confidence?: CodeRelationship["confidence"];
+  evidence?: RelationshipEvidence;
 }
 
 export interface ProjectToolResult {
   success: boolean;
   output: string;
   content?: string;
+}
+
+export interface WorkspaceTrustResult extends ProjectToolResult {
+  trusted: boolean;
+  rootPath?: string;
 }
 
 export interface ProjectMutationResult extends ProjectToolResult {
@@ -421,6 +478,13 @@ declare global {
       setMiniAlwaysOnTop: (args: {
         alwaysOnTop: boolean;
       }) => Promise<MiniWindowStateResult>;
+      getWorkspaceTrust: (args: {
+        rootPath: string;
+      }) => Promise<WorkspaceTrustResult>;
+      setWorkspaceTrust: (args: {
+        rootPath: string;
+        trusted: boolean;
+      }) => Promise<WorkspaceTrustResult>;
       platform: string;
     };
   }

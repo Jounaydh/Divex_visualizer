@@ -32,6 +32,7 @@ describe("project watcher", () => {
   it("filters generated folders and unsupported files", () => {
     expect(shouldRefreshProject("lib/main.dart")).toBe(true);
     expect(shouldRefreshProject("src/App.java")).toBe(true);
+    expect(shouldRefreshProject("database/schema.sql")).toBe(true);
     expect(shouldRefreshProject("build/generated.dart")).toBe(false);
     expect(shouldRefreshProject("README.md")).toBe(false);
   });

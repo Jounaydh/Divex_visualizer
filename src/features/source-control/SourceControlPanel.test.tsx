@@ -18,6 +18,33 @@ afterEach(() => {
 });
 
 describe("SourceControlPanel", () => {
+  it("does not invoke Git while a workspace is restricted", () => {
+    const getGitStatus = vi.fn();
+    const onTrustWorkspace = vi.fn();
+    Object.defineProperty(window, "divex", {
+      configurable: true,
+      value: { getGitStatus, platform: "darwin" } as unknown as NonNullable<
+        Window["divex"]
+      >,
+    });
+
+    render(
+      <SourceControlPanel
+        rootPath="/project"
+        enabled
+        trusted={false}
+        refreshKey={0}
+        onOpenFile={vi.fn()}
+        onTrustWorkspace={onTrustWorkspace}
+      />,
+    );
+
+    expect(screen.getByText("Source control is restricted")).toBeInTheDocument();
+    expect(getGitStatus).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Trust this folder" }));
+    expect(onTrustWorkspace).toHaveBeenCalledOnce();
+  });
+
   it("shows repository changes and stages a selected file", async () => {
     const getGitStatus = vi.fn().mockResolvedValue({
       success: true,
@@ -61,8 +88,10 @@ describe("SourceControlPanel", () => {
       <SourceControlPanel
         rootPath="/project"
         enabled
+        trusted
         refreshKey={0}
         onOpenFile={vi.fn()}
+        onTrustWorkspace={vi.fn()}
       />,
     );
 

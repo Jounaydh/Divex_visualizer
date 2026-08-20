@@ -1,0 +1,59 @@
+appId: com.divex.visualizer
+productName: Divex Visualizer
+copyright: Copyright © 2026 Divex
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - dist/**/*
+  - electron/**/*.cjs
+  - package.json
+  - LICENSE
+  - "!electron/**/*.test.*"
+  - "!**/*.map"
+
+asar: true
+asarUnpack:
+  - node_modules/node-pty/prebuilds/**/*
+
+npmRebuild: false
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.png
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  target:
+    - dmg
+    - zip
+
+dmg:
+  title: ${productName} ${version}
+  sign: false
+
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+    - zip
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Divex Visualizer
+  deleteAppDataOnUninstall: false
+
+linux:
+  icon: build/icon.png
+  category: Development
+  synopsis: Visual code and logic mapping desktop IDE
+  target:
+    - AppImage
+    - deb
+
+publish: null

@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 function vendorChunk(id: string) {
   const moduleId = id.replaceAll("\\", "/");
   if (!moduleId.includes("/node_modules/")) return undefined;
-  if (moduleId.includes("/ace-builds/")) return "editor-engine";
+  if (moduleId.includes("/monaco-editor/")) return "editor-engine";
   if (
     moduleId.includes("/react/") ||
     moduleId.includes("/react-dom/") ||

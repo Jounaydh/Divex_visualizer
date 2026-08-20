@@ -19,15 +19,40 @@ import {
   WrapText,
   X,
 } from "lucide-react";
-import * as ace from "ace-builds";
-import "ace-builds/src-noconflict/ext-language_tools";
-import "ace-builds/src-noconflict/mode-dart";
-import "ace-builds/src-noconflict/mode-java";
-import "ace-builds/src-noconflict/mode-json";
-import "ace-builds/src-noconflict/mode-python";
-import "ace-builds/src-noconflict/mode-text";
-import "ace-builds/src-noconflict/mode-yaml";
-import "ace-builds/src-noconflict/theme-one_dark";
+import * as monaco from "monaco-editor/editor";
+import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
+import JsonWorker from "monaco-editor/language/json/json.worker.js?worker";
+import "monaco-editor/features/bracketMatching/register.js";
+import "monaco-editor/features/clipboard/register.js";
+import "monaco-editor/features/codeEditor/register.js";
+import "monaco-editor/features/codicon/register.js";
+import "monaco-editor/features/comment/register.js";
+import "monaco-editor/features/contextmenu/register.js";
+import "monaco-editor/features/cursorUndo/register.js";
+import "monaco-editor/features/dnd/register.js";
+import "monaco-editor/features/find/register.js";
+import "monaco-editor/features/folding/register.js";
+import "monaco-editor/features/fontZoom/register.js";
+import "monaco-editor/features/hover/register.js";
+import "monaco-editor/features/indentation/register.js";
+import "monaco-editor/features/lineSelection/register.js";
+import "monaco-editor/features/linesOperations/register.js";
+import "monaco-editor/features/links/register.js";
+import "monaco-editor/features/multicursor/register.js";
+import "monaco-editor/features/snippet/register.js";
+import "monaco-editor/features/stickyScroll/register.js";
+import "monaco-editor/features/suggest/register.js";
+import "monaco-editor/features/tokenization/register.js";
+import "monaco-editor/features/unicodeHighlighter/register.js";
+import "monaco-editor/features/wordHighlighter/register.js";
+import "monaco-editor/features/wordOperations/register.js";
+import "monaco-editor/features/wordPartOperations/register.js";
+import "monaco-editor/languages/definitions/dart/register.js";
+import "monaco-editor/languages/definitions/java/register.js";
+import "monaco-editor/languages/definitions/python/register.js";
+import "monaco-editor/languages/definitions/sql/register.js";
+import "monaco-editor/languages/definitions/yaml/register.js";
+import "monaco-editor/languages/features/json/register.js";
 import {
   useCallback,
   useEffect,
@@ -40,6 +65,7 @@ import type {
   CodeSymbol,
   ProjectToolResult,
 } from "../../types";
+import { monacoLanguageForExtension } from "./editorLanguage";
 import { parseFlutterDiagnostics } from "./flutterDiagnostics";
 
 interface CodeEditorProps {
@@ -49,6 +75,7 @@ interface CodeEditorProps {
   rootPath: string;
   revealLine: number | null;
   revealKey: number;
+  workspaceTrusted: boolean;
   onClose: () => void;
   onSelectFile: (path: string) => void;
   onPersist: (path: string, content: string) => void;
@@ -56,32 +83,32 @@ interface CodeEditorProps {
 
 interface EditorDocument {
   file: AnalyzedFile;
-  session: ace.Ace.EditSession;
+  model: monaco.editor.ITextModel;
   savedContent: string;
   dirty: boolean;
-  cursor: { row: number; column: number };
-  scrollTop: number;
-  scrollLeft: number;
+  viewState: monaco.editor.ICodeEditorViewState | null;
+  changeSubscription: monaco.IDisposable;
 }
 
 type EditorAction = "save" | "save-all" | "format" | "analyze" | null;
 
-const aceModeForExtension = (extension: string) => {
-  const modes: Record<string, string> = {
-    dart: "ace/mode/dart",
-    java: "ace/mode/java",
-    json: "ace/mode/json",
-    py: "ace/mode/python",
-    python: "ace/mode/python",
-    yaml: "ace/mode/yaml",
-    yml: "ace/mode/yaml",
+const monacoGlobal = globalThis as typeof globalThis & {
+  MonacoEnvironment?: {
+    getWorker: (_moduleId: string, label: string) => Worker;
   };
-  return modes[extension.toLowerCase()] ?? "ace/mode/text";
+};
+
+monacoGlobal.MonacoEnvironment = {
+  getWorker: (_moduleId, label) => {
+    if (label === "json") return new JsonWorker();
+    return new EditorWorker();
+  },
 };
 
 function fileLanguage(file: AnalyzedFile) {
   if (file.extension === "dart") return "Dart";
   if (file.extension === "py") return "Python";
+  if (file.extension === "sql") return "SQL";
   return file.extension ? file.extension.toUpperCase() : "Plain text";
 }
 
@@ -103,6 +130,7 @@ export function CodeEditor({
   rootPath,
   revealLine,
   revealKey,
+  workspaceTrusted,
   onClose,
   onSelectFile,
   onPersist,
@@ -121,7 +149,7 @@ export function CodeEditor({
   const [tabSize, setTabSize] = useState(2);
   const [problemCount, setProblemCount] = useState(0);
   const editorHostRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<ace.Ace.Editor | null>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const outlineMenuRef = useRef<HTMLDivElement>(null);
   const documentsRef = useRef(new Map<string, EditorDocument>());
@@ -140,35 +168,41 @@ export function CodeEditor({
   const ensureDocument = useCallback((nextFile: AnalyzedFile) => {
     let document = documentsRef.current.get(nextFile.path);
     if (!document) {
-      const session = ace.createEditSession(nextFile.content);
-      session.setMode(aceModeForExtension(nextFile.extension));
-      session.setUseWorker(false);
-      session.setTabSize(2);
-      session.setUseSoftTabs(true);
+      const model = monaco.editor.createModel(
+        nextFile.content,
+        monacoLanguageForExtension(nextFile.extension),
+        monaco.Uri.from({
+          scheme: "inmemory",
+          authority: "divex",
+          path: `/${nextFile.path}`,
+        }),
+      );
+      model.updateOptions({ insertSpaces: true, tabSize: 2 });
       document = {
         file: nextFile,
-        session,
+        model,
         savedContent: nextFile.content,
         dirty: false,
-        cursor: { row: 0, column: 0 },
-        scrollTop: 0,
-        scrollLeft: 0,
+        viewState: null,
+        changeSubscription: { dispose: () => undefined },
       };
       const ownedDocument = document;
-      session.on("change", () => {
+      ownedDocument.changeSubscription = model.onDidChangeContent(() => {
         if (suppressedDocumentsRef.current.has(nextFile.path)) return;
         ownedDocument.dirty =
-          ownedDocument.session.getValue() !== ownedDocument.savedContent;
+          ownedDocument.model.getValue() !== ownedDocument.savedContent;
         setRevision((current) => current + 1);
       });
       documentsRef.current.set(nextFile.path, document);
     } else {
       document.file = nextFile;
-      document.session.setMode(aceModeForExtension(nextFile.extension));
+      monaco.editor.setModelLanguage(
+        document.model,
+        monacoLanguageForExtension(nextFile.extension),
+      );
       if (!document.dirty && document.savedContent !== nextFile.content) {
         suppressedDocumentsRef.current.add(nextFile.path);
-        document.session.setValue(nextFile.content);
-        document.session.getUndoManager().reset();
+        document.model.setValue(nextFile.content);
         suppressedDocumentsRef.current.delete(nextFile.path);
         document.savedContent = nextFile.content;
       }
@@ -180,9 +214,7 @@ export function CodeEditor({
     const editor = editorRef.current;
     const activeDocument = documentsRef.current.get(activePathRef.current);
     if (!editor || !activeDocument) return;
-    activeDocument.cursor = editor.getCursorPosition();
-    activeDocument.scrollTop = activeDocument.session.getScrollTop();
-    activeDocument.scrollLeft = activeDocument.session.getScrollLeft();
+    activeDocument.viewState = editor.saveViewState();
   }, []);
 
   const activateDocument = useCallback(
@@ -200,16 +232,16 @@ export function CodeEditor({
       }
       rememberActiveView();
       activePathRef.current = nextFile.path;
-      editor.setSession(document.session);
-      editor.textInput
-        .getElement()
-        .setAttribute("aria-label", `Editing ${nextFile.name}`);
-      editor.moveCursorTo(document.cursor.row, document.cursor.column);
-      editor.clearSelection();
-      document.session.setScrollTop(document.scrollTop);
-      document.session.setScrollLeft(document.scrollLeft);
-      setCursor(document.cursor);
-      editor.resize(true);
+      editor.setModel(document.model);
+      editor.updateOptions({ ariaLabel: `Editing ${nextFile.name}` });
+      if (document.viewState) editor.restoreViewState(document.viewState);
+      else editor.setPosition({ lineNumber: 1, column: 1 });
+      const position = editor.getPosition();
+      setCursor({
+        row: Math.max(0, (position?.lineNumber ?? 1) - 1),
+        column: Math.max(0, (position?.column ?? 1) - 1),
+      });
+      editor.layout();
       editor.focus();
       setRevision((current) => current + 1);
     },
@@ -218,45 +250,74 @@ export function CodeEditor({
 
   useEffect(() => {
     if (!editorHostRef.current) return;
-    const editor = ace.edit(editorHostRef.current);
-    editorRef.current = editor;
-    editor.setTheme("ace/theme/one_dark");
-    editor.setOptions({
-      animatedScroll: true,
-      behavioursEnabled: true,
-      displayIndentGuides: true,
-      dragEnabled: true,
-      enableBasicAutocompletion: true,
-      enableLiveAutocompletion: true,
-      enableMultiselect: true,
+    monaco.editor.defineTheme("divex-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [],
+      colors: {
+        "editor.background": "#0f1013",
+        "editor.foreground": "#d7dae0",
+        "editor.lineHighlightBackground": "#ffffff08",
+        "editor.selectionBackground": "#ffffff2b",
+        "editor.inactiveSelectionBackground": "#ffffff18",
+        "editorCursor.foreground": "#ffffff",
+        "editorGutter.background": "#111216",
+        "editorLineNumber.foreground": "#50535c",
+        "editorLineNumber.activeForeground": "#a8abb3",
+        "editorIndentGuide.background1": "#ffffff0d",
+        "editorIndentGuide.activeBackground1": "#ffffff24",
+      },
+    });
+    const editor = monaco.editor.create(editorHostRef.current, {
+      ariaLabel: `Editing ${file.name}`,
+      automaticLayout: true,
+      cursorBlinking: "smooth",
+      cursorSmoothCaretAnimation: "on",
+      dragAndDrop: true,
+      folding: true,
       fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
-      fontSize: "11px",
-      highlightActiveLine: true,
-      highlightSelectedWord: true,
-      mergeUndoDeltas: "always",
-      scrollPastEnd: 0.28,
-      showFoldWidgets: true,
-      showPrintMargin: false,
-      wrap: false,
+      fontLigatures: true,
+      fontSize: 11,
+      formatOnPaste: true,
+      guides: { indentation: true },
+      minimap: { enabled: false },
+      mouseWheelZoom: true,
+      multiCursorModifier: "alt",
+      padding: { top: 10, bottom: 90 },
+      renderLineHighlight: "all",
+      roundedSelection: true,
+      scrollBeyondLastLine: true,
+      smoothScrolling: true,
+      stickyScroll: { enabled: true },
+      suggest: { preview: true, showWords: true },
+      tabSize: 2,
+      theme: "divex-dark",
+      wordWrap: "off",
     });
-    editor.renderer.setPadding(13);
-    editor.renderer.setScrollMargin(10, 90, 0, 0);
-    const handleCursor = () => setCursor(editor.getCursorPosition());
-    editor.selection.on("changeCursor", handleCursor);
-    editor.commands.addCommand({
-      name: "divexSave",
-      bindKey: { mac: "Command-S", win: "Ctrl-S" },
-      exec: () => void saveCommandRef.current(),
-    });
+    editorRef.current = editor;
+    const cursorSubscription = editor.onDidChangeCursorPosition((event) =>
+      setCursor({
+        row: Math.max(0, event.position.lineNumber - 1),
+        column: Math.max(0, event.position.column - 1),
+      }),
+    );
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+      () => void saveCommandRef.current(),
+    );
     activateDocument(file);
 
     return () => {
-      editor.selection.off("changeCursor", handleCursor);
-      editor.destroy();
+      cursorSubscription.dispose();
+      editor.dispose();
       editorRef.current = null;
+      documentsRef.current.forEach((document) => {
+        document.changeSubscription.dispose();
+        document.model.dispose();
+      });
       documentsRef.current.clear();
     };
-    // Ace is created once; files switch by changing EditSession.
+    // Monaco is created once; files switch by changing text models.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -283,12 +344,12 @@ export function CodeEditor({
       revealFrame = window.requestAnimationFrame(() => {
         const line = Math.min(
           Math.max(1, revealLine),
-          editor.session.getLength(),
+          editor.getModel()?.getLineCount() ?? 1,
         );
-        editor.resize(true);
-        editor.gotoLine(line, 0, true);
-        editor.clearSelection();
-        setCursor(editor.getCursorPosition());
+        editor.layout();
+        editor.setPosition({ lineNumber: line, column: 1 });
+        editor.revealLineInCenter(line, monaco.editor.ScrollType.Smooth);
+        setCursor({ row: line - 1, column: 0 });
         editor.focus();
       });
     });
@@ -301,13 +362,16 @@ export function CodeEditor({
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    editor.setFontSize(fontSize);
-    editor.setShowInvisibles(showInvisibles);
-    documentsRef.current.forEach((document) => {
-      document.session.setUseWrapMode(wrap);
-      document.session.setTabSize(tabSize);
+    editor.updateOptions({
+      fontSize,
+      renderWhitespace: showInvisibles ? "all" : "selection",
+      tabSize,
+      wordWrap: wrap ? "on" : "off",
     });
-    editor.resize(true);
+    documentsRef.current.forEach((document) => {
+      document.model.updateOptions({ insertSpaces: true, tabSize });
+    });
+    editor.layout();
   }, [fontSize, openTabs, showInvisibles, tabSize, wrap]);
 
   useEffect(() => {
@@ -359,7 +423,7 @@ export function CodeEditor({
     if (!document) {
       return { success: false, output: "That editor document is not open." };
     }
-    const content = document.session.getValue();
+    const content = document.model.getValue();
     const saveResult =
       !window.divex || rootPath === "Demo project"
         ? {
@@ -428,8 +492,7 @@ export function CodeEditor({
     saved: boolean,
   ) => {
     suppressedDocumentsRef.current.add(document.file.path);
-    document.session.setValue(content);
-    document.session.getUndoManager().reset();
+    document.model.setValue(content);
     suppressedDocumentsRef.current.delete(document.file.path);
     if (saved) {
       document.savedContent = content;
@@ -441,7 +504,7 @@ export function CodeEditor({
   };
 
   const formatDart = async () => {
-    if (file.extension !== "dart") return;
+    if (file.extension !== "dart" || !workspaceTrusted) return;
     if (!window.divex || rootPath === "Demo project") {
       setResult({
         success: false,
@@ -455,7 +518,7 @@ export function CodeEditor({
       const formatResult = await window.divex.formatDartFile({
         rootPath,
         filePath: file.path,
-        content: document.session.getValue(),
+        content: document.model.getValue(),
       });
       setResult(formatResult);
       if (formatResult.success && formatResult.content !== undefined) {
@@ -470,8 +533,9 @@ export function CodeEditor({
   const applyDiagnostics = (output: string) => {
     const diagnostics = parseFlutterDiagnostics(output);
     documentsRef.current.forEach((document) =>
-      document.session.clearAnnotations(),
+      monaco.editor.setModelMarkers(document.model, "divex-flutter", []),
     );
+    const markersByPath = new Map<string, monaco.editor.IMarkerData[]>();
     diagnostics.forEach((diagnostic) => {
       const matchingFile = files.find(
         (candidate) =>
@@ -481,21 +545,53 @@ export function CodeEditor({
       if (!matchingFile) return;
       const document = documentsRef.current.get(matchingFile.path);
       if (!document) return;
-      const current = document.session.getAnnotations() ?? [];
-      document.session.setAnnotations([
-        ...current,
-        {
-          row: Math.max(0, diagnostic.line - 1),
-          column: Math.max(0, diagnostic.column - 1),
-          text: `${diagnostic.message} (${diagnostic.code})`,
-          type: diagnostic.severity,
-        },
-      ]);
+      const lineNumber = Math.min(
+        Math.max(1, diagnostic.line),
+        document.model.getLineCount(),
+      );
+      const startColumn = Math.min(
+        Math.max(1, diagnostic.column),
+        document.model.getLineMaxColumn(lineNumber),
+      );
+      const severity =
+        diagnostic.severity === "error"
+          ? monaco.MarkerSeverity.Error
+          : diagnostic.severity === "warning"
+            ? monaco.MarkerSeverity.Warning
+            : monaco.MarkerSeverity.Info;
+      const markers = markersByPath.get(matchingFile.path) ?? [];
+      markers.push({
+        code: diagnostic.code,
+        endColumn: Math.min(
+          document.model.getLineMaxColumn(lineNumber),
+          startColumn + 1,
+        ),
+        endLineNumber: lineNumber,
+        message: diagnostic.message,
+        severity,
+        source: "flutter analyze",
+        startColumn,
+        startLineNumber: lineNumber,
+      });
+      markersByPath.set(matchingFile.path, markers);
+    });
+    markersByPath.forEach((markers, path) => {
+      const document = documentsRef.current.get(path);
+      if (document) {
+        monaco.editor.setModelMarkers(document.model, "divex-flutter", markers);
+      }
     });
     setProblemCount(diagnostics.length);
   };
 
   const analyzeFlutter = async () => {
+    if (!workspaceTrusted) {
+      setResult({
+        success: false,
+        output: "Trust this workspace before running Flutter analysis.",
+      });
+      return;
+    }
     if (!window.divex || rootPath === "Demo project") {
       setResult({
         success: false,
@@ -524,6 +620,9 @@ export function CodeEditor({
     const nextTabs = currentTabs.filter((candidate) => candidate !== path);
     setOpenTabs(nextTabs);
     setPendingClosePath(null);
+    const closingDocument = documentsRef.current.get(path);
+    closingDocument?.changeSubscription.dispose();
+    closingDocument?.model.dispose();
     if (path !== file.path) {
       documentsRef.current.delete(path);
       return;
@@ -557,8 +656,8 @@ export function CodeEditor({
   const goToSymbol = (symbol: CodeSymbol) => {
     const editor = editorRef.current;
     if (!editor) return;
-    editor.gotoLine(symbol.line, 0, true);
-    editor.clearSelection();
+    editor.setPosition({ lineNumber: symbol.line, column: symbol.column });
+    editor.revealLineInCenter(symbol.line, monaco.editor.ScrollType.Smooth);
     editor.focus();
     setOutlineOpen(false);
   };
@@ -602,7 +701,9 @@ export function CodeEditor({
             type="button"
             title="Undo"
             aria-label="Undo"
-            onClick={() => editorRef.current?.undo()}
+            onClick={() =>
+              editorRef.current?.trigger("divex-toolbar", "undo", null)
+            }
           >
             <Undo2 size={13} />
           </button>
@@ -610,7 +711,9 @@ export function CodeEditor({
             type="button"
             title="Redo"
             aria-label="Redo"
-            onClick={() => editorRef.current?.redo()}
+            onClick={() =>
+              editorRef.current?.trigger("divex-toolbar", "redo", null)
+            }
           >
             <Redo2 size={13} />
           </button>
@@ -618,7 +721,9 @@ export function CodeEditor({
             type="button"
             title="Find (⌘F)"
             aria-label="Find in file"
-            onClick={() => editorRef.current?.execCommand("find")}
+            onClick={() =>
+              void editorRef.current?.getAction("actions.find")?.run()
+            }
           >
             <Search size={13} />
           </button>
@@ -626,7 +731,11 @@ export function CodeEditor({
             type="button"
             title="Replace (⌥⌘F)"
             aria-label="Replace in file"
-            onClick={() => editorRef.current?.execCommand("replace")}
+            onClick={() =>
+              void editorRef.current
+                ?.getAction("editor.action.startFindReplaceAction")
+                ?.run()
+            }
           >
             <Replace size={13} />
           </button>
@@ -707,7 +816,11 @@ export function CodeEditor({
             type="button"
             title="Format Dart file"
             onClick={() => void formatDart()}
-            disabled={action !== null || file.extension !== "dart"}
+            disabled={
+              action !== null ||
+              file.extension !== "dart" ||
+              !workspaceTrusted
+            }
           >
             <WandSparkles size={14} />
             <span>{action === "format" ? "Formatting…" : "Format"}</span>
@@ -716,7 +829,7 @@ export function CodeEditor({
             type="button"
             title="Analyze Flutter project"
             onClick={() => void analyzeFlutter()}
-            disabled={action !== null}
+            disabled={action !== null || !workspaceTrusted}
           >
             <Play size={14} />
             <span>{action === "analyze" ? "Analyzing…" : "Analyze"}</span>

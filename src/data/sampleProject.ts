@@ -95,6 +95,10 @@ class _HomePageState extends State<HomePage> {
       content: `import '../models/dive.dart';
 
 class DiveService {
+  static const loadDivesQuery = '''
+    SELECT id, site_id, depth, duration FROM dives
+  ''';
+
   Future<List<Dive>> fetchDives() async {
     await Future<void>.delayed(const Duration(milliseconds: 400));
     return const [
@@ -124,6 +128,23 @@ class DiveCard extends StatelessWidget {
     );
   }
 }`,
+    },
+    {
+      path: "database/schema.sql",
+      content: `CREATE TABLE sites (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE dives (
+  id INTEGER PRIMARY KEY,
+  site_id INTEGER NOT NULL,
+  depth REAL NOT NULL,
+  duration INTEGER NOT NULL,
+  recorded_at TEXT,
+  FOREIGN KEY (site_id) REFERENCES sites(id)
+);
+`,
     },
     {
       path: "test/widget_test.dart",

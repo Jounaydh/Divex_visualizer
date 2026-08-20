@@ -54,7 +54,8 @@ number of elements mounted at one instant.
 - Rendered edges are sorted by semantic priority and capped.
 - Viewport updates are grouped into `requestAnimationFrame`.
 - Logic-map loading is deferred until that tab is opened.
-- Ace and the editor UI are deferred until source view is opened.
+- Monaco, its language workers, and the editor UI are deferred until source
+  view is opened.
 - Large-map scaling uses CSS `zoom` so the scrollable dimensions remain
   consistent with the visible scale.
 - Development builds warn when graph construction, layout, or routing blocks

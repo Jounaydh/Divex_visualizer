@@ -35,12 +35,12 @@ After `npm run build`:
 - `dist/index.html` should load the normal entry and stable vendor chunks.
 - The logic-map feature should be emitted as a dynamic chunk.
 - `MiniApp` should be emitted as a small dynamic chunk and should not include
-  Ace, Xterm, or source-control code.
+  Monaco, Xterm, or source-control code.
 - The editor UI and `editor-engine` should be emitted as dynamic chunks.
 - The production HTML should not preload the editor engine.
-- No chunk should unexpectedly absorb all Ace modes or retired 3D libraries.
+- No initial chunk should unexpectedly absorb Monaco or retired 3D libraries.
 
-Ace is intentionally large but optional. A warning about the editor engine is
+Monaco is intentionally large but optional. A warning about the editor engine is
 acceptable while its raw chunk remains lazy.
 
 ## Desktop smoke test
@@ -112,8 +112,8 @@ Check:
 49. Find, replace, undo, redo, breadcrumbs, and symbol navigation operate on
     the active document.
 50. Font size, wrap, whitespace, and tab-size settings apply across open tabs.
-51. Flutter Analyze saves dirty buffers first and adds matching gutter
-    annotations and a status-bar problem count.
+51. Flutter Analyze saves dirty buffers first and adds matching Monaco markers
+    and a status-bar problem count.
 52. **File → Open Divex Mini** opens a separate 720 × 520 companion window.
 53. Resize Mini to 420 × 320 and confirm its map tabs, search, live control,
     pin control, zoom controls, and status remain reachable.
@@ -127,6 +127,30 @@ Check:
     in the associated external editor.
 59. Toggle always-on-top, close Mini, reopen it, and confirm its pin state,
     position, size, selected map, and live preference are restored.
+
+## Workspace-trust checks
+
+1. Open a folder that has never been trusted and confirm the Restricted Mode
+   banner appears.
+2. Confirm maps, search, source viewing/editing, reveal, copy, and Mini work.
+3. Confirm terminal, task, active-file run, external open, Git, Dart format, and
+   Flutter analysis controls are unavailable.
+4. Invoke a protected preload method from DevTools and confirm Electron still
+   returns a Restricted Mode error.
+5. Trust the folder from the banner or File menu, accept the warning, and
+   confirm protected tools become available.
+6. Restart Divex and confirm trust persists for that exact folder.
+7. Open a sibling or child folder and confirm it remains restricted.
+8. Revoke trust while a terminal is running and confirm the session closes and
+   protected tools become unavailable immediately.
+
+## Packaged-application checks
+
+Run `npm run package` for an unpacked current-platform smoke test. Before a
+public release, run the native installer command on each target OS and follow
+the complete checklist in [Distribution](DISTRIBUTION.md). Confirm the app icon,
+editor, maps, Mini, terminal native binary, trust persistence, and uninstall
+behavior from an installed build.
 
 ## Crash-containment checks
 
@@ -170,13 +194,16 @@ developer workstation.
 
 ## Test gaps
 
-The repository tests crash containment, loader filtering/progress/cache reuse,
+The repository tests crash containment, versioned relationship evidence,
+SQL tables/columns/keys, foreign-key resolution, Dart database access links,
+loader filtering/progress/cache reuse,
 changed-file reads, navigation search, definition/reference lookup, history,
 Git porcelain parsing, Git path containment, and stage/unstage state
 transitions, plus PTY directory containment, ownership, stream, resize, exit,
-and termination behavior, project-watcher filtering and debouncing, plus
-Flutter analyzer diagnostic parsing. It does not yet have analyzer, layout, or
-full Electron integration coverage.
+and termination behavior, project-watcher filtering and debouncing, Flutter
+analyzer diagnostic parsing, exact-folder trust persistence/privacy, and
+restricted Source Control behavior. It does not yet have broad analyzer,
+  layout, or full Electron integration coverage.
 Highest-priority additions are:
 
 - fixtures for Dart symbols, imports, calls, and type relationships
@@ -184,3 +211,5 @@ Highest-priority additions are:
 - protected-mode scoping and limit tests
 - Electron path-validation and file-action tests
 - Playwright Electron smoke tests for both maps and the editor
+- dialect fixtures for PostgreSQL schemas, SQLite migrations, MySQL quoting,
+  database views, and ORM-generated SQL

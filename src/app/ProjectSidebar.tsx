@@ -24,6 +24,7 @@ interface ProjectSidebarProps {
   activeView: SidebarView;
   selectedId: string | null;
   canUseNativePaths: boolean;
+  canExecuteProject: boolean;
   canShare: boolean;
   hasClipboard: boolean;
   projectMenuOpen: boolean;
@@ -46,6 +47,7 @@ interface ProjectSidebarProps {
   onCopyEntry: (entry: ExplorerEntry) => void;
   onPasteEntry: (entry: ExplorerEntry) => void;
   onOpenGitFile: (path: string) => void;
+  onTrustWorkspace: () => void;
 }
 
 export function ProjectSidebar({
@@ -53,6 +55,7 @@ export function ProjectSidebar({
   activeView,
   selectedId,
   canUseNativePaths,
+  canExecuteProject,
   canShare,
   hasClipboard,
   projectMenuOpen,
@@ -75,6 +78,7 @@ export function ProjectSidebar({
   onCopyEntry,
   onPasteEntry,
   onOpenGitFile,
+  onTrustWorkspace,
 }: ProjectSidebarProps) {
   const symbolCount = project.files.reduce(
     (total, file) => total + file.symbols.length,
@@ -150,6 +154,7 @@ export function ProjectSidebar({
             root={project.root}
             selectedId={selectedId}
             canUseNativePaths={canUseNativePaths}
+            canExecuteProject={canExecuteProject}
             canShare={canShare}
             hasClipboard={hasClipboard}
             onSelectFile={onSelectFile}
@@ -186,8 +191,10 @@ export function ProjectSidebar({
         <SourceControlPanel
           rootPath={project.rootPath}
           enabled={canUseNativePaths}
+          trusted={canExecuteProject}
           refreshKey={gitRefreshKey}
           onOpenFile={onOpenGitFile}
+          onTrustWorkspace={onTrustWorkspace}
         />
       )}
     </aside>

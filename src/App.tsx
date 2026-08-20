@@ -19,6 +19,7 @@ import {
 } from "./app/ProjectSidebar";
 import { VisualizerWorkspace } from "./app/VisualizerWorkspace";
 import { WorkspaceResizer } from "./app/WorkspaceResizer";
+import { WorkspaceTrustBanner } from "./app/WorkspaceTrustBanner";
 import type { ExplorerEntry } from "./features/explorer/FileExplorer";
 import { InspectorPanel } from "./features/inspector/InspectorPanel";
 import {
@@ -137,6 +138,8 @@ export default function App({ safeMode = false }: AppProps) {
       : null,
   );
   const [projectIsLocal, setProjectIsLocal] = useState(false);
+  const [workspaceTrusted, setWorkspaceTrusted] = useState(true);
+  const [workspaceTrustLoading, setWorkspaceTrustLoading] = useState(false);
   const [explorerClipboard, setExplorerClipboard] =
     useState<ExplorerClipboard | null>(null);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
@@ -169,6 +172,31 @@ export default function App({ safeMode = false }: AppProps) {
   useEffect(() => {
     setGitRefreshKey((current) => current + 1);
   }, [payload.files, payload.rootPath]);
+
+  useEffect(() => {
+    if (!projectIsLocal || !window.divex) {
+      setWorkspaceTrusted(true);
+      setWorkspaceTrustLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setWorkspaceTrusted(false);
+    setWorkspaceTrustLoading(true);
+    void window.divex
+      .getWorkspaceTrust({ rootPath: payload.rootPath })
+      .then((result) => {
+        if (!cancelled) setWorkspaceTrusted(result.success && result.trusted);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceTrusted(false);
+      })
+      .finally(() => {
+        if (!cancelled) setWorkspaceTrustLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payload.rootPath, projectIsLocal]);
 
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -260,14 +288,56 @@ export default function App({ safeMode = false }: AppProps) {
   };
   const terminal = useIntegratedTerminal({
     rootPath: payload.rootPath,
-    enabled: projectIsLocal && Boolean(window.divex),
+    enabled: projectIsLocal && workspaceTrusted && Boolean(window.divex),
     onNotice: showTransientNotice,
   });
+  const workspaceTrustState = !projectIsLocal
+    ? "demo"
+    : workspaceTrustLoading
+      ? "checking"
+      : workspaceTrusted
+        ? "trusted"
+        : "restricted";
+
+  const toggleWorkspaceTrust = async () => {
+    if (!projectIsLocal || !window.divex || workspaceTrustLoading) return;
+    const nextTrusted = !workspaceTrusted;
+    const confirmed = window.confirm(
+      nextTrusted
+        ? `Trust “${payload.name}”?\n\nTrusted workspaces may run terminals, project tasks, Git commands, formatters, and analyzers. Only continue if you trust every file in this folder.`
+        : `Revoke trust for “${payload.name}”?\n\nRunning terminals will close and project execution tools will return to Restricted Mode. Editing and visualization will remain available.`,
+    );
+    if (!confirmed) return;
+    const requestedRoot = payload.rootPath;
+    setWorkspaceTrustLoading(true);
+    try {
+      const result = await window.divex.setWorkspaceTrust({
+        rootPath: requestedRoot,
+        trusted: nextTrusted,
+      });
+      if (result.success && requestedRoot === payload.rootPath) {
+        setWorkspaceTrusted(result.trusted);
+        if (!result.trusted) await terminal.closeAll();
+        setGitRefreshKey((current) => current + 1);
+      }
+      showTransientNotice(result.output, result.success ? 3500 : 5000);
+    } catch (error) {
+      showTransientNotice(
+        error instanceof Error
+          ? error.message
+          : "Workspace trust could not be changed.",
+        5000,
+      );
+    } finally {
+      setWorkspaceTrustLoading(false);
+    }
+  };
 
   const resetWorkspace = (
     nextProject: ProjectPayload,
     isLocalProject = false,
   ) => {
+    const rootChanged = nextProject.rootPath !== payload.rootPath;
     const firstTopLevelFolder = nextProject.files
       .map((file) => file.path.split("/"))
       .find((parts) => parts.length > 1)?.[0];
@@ -287,6 +357,10 @@ export default function App({ safeMode = false }: AppProps) {
     setEditorRevealKey((current) => current + 1);
     navigationHistory.reset();
     setProjectIsLocal(isLocalProject);
+    if (rootChanged) {
+      setWorkspaceTrusted(!isLocalProject);
+      setWorkspaceTrustLoading(isLocalProject);
+    }
   };
 
   const toggleFolderFreely = (id: string) => {
@@ -628,6 +702,13 @@ export default function App({ safeMode = false }: AppProps) {
       showTransientNotice("Open a local project to use an external app.");
       return;
     }
+    if (!workspaceTrusted) {
+      showTransientNotice(
+        "Restricted Mode blocked opening this file in an external application.",
+        4500,
+      );
+      return;
+    }
     const result = await window.divex.openProjectEntry({
       rootPath: payload.rootPath,
       entryPath: entry.path,
@@ -636,6 +717,13 @@ export default function App({ safeMode = false }: AppProps) {
   };
 
   const openExplorerTerminal = async (entry: ExplorerEntry) => {
+    if (!workspaceTrusted) {
+      showTransientNotice(
+        "Trust this workspace before opening a terminal.",
+        4500,
+      );
+      return;
+    }
     const directory =
       entry.kind === "folder"
         ? entry.path
@@ -770,6 +858,13 @@ export default function App({ safeMode = false }: AppProps) {
       showTransientNotice("Open a local project to launch a terminal.");
       return;
     }
+    if (!workspaceTrusted) {
+      showTransientNotice(
+        "Trust this workspace before opening a terminal.",
+        4500,
+      );
+      return;
+    }
     const result = await window.divex.openProjectTerminal({
       rootPath: payload.rootPath,
     });
@@ -777,6 +872,13 @@ export default function App({ safeMode = false }: AppProps) {
   };
 
   const runProjectTask = async (taskId: string) => {
+    if (!workspaceTrusted) {
+      showTransientNotice(
+        "Restricted Mode blocked this task. Trust the workspace to run project code.",
+        4500,
+      );
+      return;
+    }
     await terminal.runTask(taskId);
   };
 
@@ -787,6 +889,13 @@ export default function App({ safeMode = false }: AppProps) {
 
   const runActiveFile = async () => {
     if (!selectedFile) return;
+    if (!workspaceTrusted) {
+      showTransientNotice(
+        "Trust this workspace before running the active file.",
+        4500,
+      );
+      return;
+    }
     await terminal.runFile(selectedFile.path);
   };
 
@@ -925,7 +1034,7 @@ export default function App({ safeMode = false }: AppProps) {
       title: "Show Source Control",
       description: "Review, stage, and commit local Git changes",
       shortcut: "⌃⇧G",
-      disabled: !projectIsLocal,
+      disabled: !projectIsLocal || !workspaceTrusted,
       keywords: "git source control changes commit stage",
       run: () => setSidebarView("source-control"),
     },
@@ -958,7 +1067,7 @@ export default function App({ safeMode = false }: AppProps) {
       title: terminal.open ? "Hide Integrated Terminal" : "Show Integrated Terminal",
       description: "Toggle the docked project terminal",
       shortcut: "⌃`",
-      disabled: !projectIsLocal,
+      disabled: !projectIsLocal || !workspaceTrusted,
       keywords: "terminal shell console panel",
       run: () =>
         terminal.open ? terminal.setOpen(false) : terminal.show(),
@@ -967,7 +1076,7 @@ export default function App({ safeMode = false }: AppProps) {
       id: "terminal.new",
       title: "New Integrated Terminal",
       description: "Start another interactive shell in this project",
-      disabled: !projectIsLocal,
+      disabled: !projectIsLocal || !workspaceTrusted,
       keywords: "terminal shell session",
       run: () => void terminal.createShell(),
     },
@@ -1064,8 +1173,11 @@ export default function App({ safeMode = false }: AppProps) {
       <AppHeader
         fileMenuOpen={fileMenuOpen}
         terminalMenuOpen={terminalMenuOpen}
-        terminalEnabled={projectIsLocal && Boolean(window.divex)}
+        terminalEnabled={
+          projectIsLocal && workspaceTrusted && Boolean(window.divex)
+        }
         miniEnabled={projectIsLocal && Boolean(window.divex)}
+        workspaceTrustState={workspaceTrustState}
         tasks={projectTasks}
         hasTerminalSessions={terminal.sessions.length > 0}
         hasActiveTerminal={Boolean(terminal.activeSession)}
@@ -1074,6 +1186,7 @@ export default function App({ safeMode = false }: AppProps) {
         canGoForward={navigationHistory.canGoForward}
         canRunActiveFile={
           projectIsLocal &&
+          workspaceTrusted &&
           Boolean(
             selectedFile &&
               (selectedFile.extension === "dart" ||
@@ -1094,6 +1207,7 @@ export default function App({ safeMode = false }: AppProps) {
         }}
         onOpenProject={openProject}
         onOpenMini={() => void openMiniWindow()}
+        onToggleWorkspaceTrust={() => void toggleWorkspaceTrust()}
         onNewTerminal={() => void terminal.createShell()}
         onOpenExternalTerminal={() => void openExternalTerminal()}
         onShowTerminal={terminal.show}
@@ -1111,6 +1225,14 @@ export default function App({ safeMode = false }: AppProps) {
         onOpenQuickSearch={() => openNavigation("files")}
       />
 
+      {projectIsLocal && !workspaceTrusted && (
+        <WorkspaceTrustBanner
+          projectName={payload.name}
+          busy={workspaceTrustLoading}
+          onTrust={() => void toggleWorkspaceTrust()}
+        />
+      )}
+
       <div
         className="workspace"
         ref={workspaceRef}
@@ -1126,6 +1248,9 @@ export default function App({ safeMode = false }: AppProps) {
           activeView={sidebarView}
           selectedId={selectedNode?.id ?? null}
           canUseNativePaths={projectIsLocal && Boolean(window.divex)}
+          canExecuteProject={
+            projectIsLocal && workspaceTrusted && Boolean(window.divex)
+          }
           canShare={
             projectIsLocal &&
             window.divex?.platform === "darwin"
@@ -1162,6 +1287,7 @@ export default function App({ safeMode = false }: AppProps) {
           onOpenGitFile={(path) =>
             openNavigationTarget({ kind: "file", path, line: 1 })
           }
+          onTrustWorkspace={() => void toggleWorkspaceTrust()}
         />
 
         <WorkspaceResizer
@@ -1200,6 +1326,7 @@ export default function App({ safeMode = false }: AppProps) {
           logicPositions={logicPositions}
           expandedFolders={expandedFolders}
           expandedFiles={expandedFiles}
+          workspaceTrusted={workspaceTrusted}
           onChangeView={changeView}
           onChangeExperience={setExperienceMode}
           onChangeWorkflowDirection={changeWorkflowDirection}
@@ -1214,6 +1341,9 @@ export default function App({ safeMode = false }: AppProps) {
           onShowVisualizer={closeSelectedSource}
           onOpenEditorFile={(path) =>
             openNavigationTarget({ kind: "file", path, line: 1 })
+          }
+          onOpenEditorLocation={(path, line) =>
+            openNavigationTarget({ kind: "file", path, line })
           }
           onSelectNode={handleSelectNode}
           onToggleFolderFreely={toggleFolderFreely}

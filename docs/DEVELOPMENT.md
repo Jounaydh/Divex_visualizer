@@ -29,6 +29,11 @@ Commands:
 | `npm run check` | Run the complete pre-commit validation gate |
 | `npm run preview` | Preview the production renderer in a browser |
 | `npm run desktop` | Open Electron against the existing renderer URL/build |
+| `npm run package` | Create an unsigned unpacked app for the current platform |
+| `npm run dist:mac` | Create macOS DMG and ZIP artifacts |
+| `npm run dist:mac:unsigned` | Create unsigned macOS artifacts for local QA |
+| `npm run dist:win` | Create Windows NSIS and ZIP artifacts |
+| `npm run dist:linux` | Create Linux AppImage and DEB artifacts |
 
 ## Directory map
 
@@ -39,6 +44,7 @@ Commands:
 │   ├── git-service.cjs             Constrained local Git operations
 │   ├── project-loader.cjs          Cached metadata-first project loading
 │   ├── terminal-service.cjs        Managed pseudoterminal sessions
+│   ├── workspace-trust.cjs         Persistent exact-folder trust store
 │   └── preload.cjs                 Safe window.divex API
 ├── src/
 │   ├── analysis/
@@ -124,6 +130,7 @@ Commands:
 | Xterm dock, tabs, resize, or task picker | `src/features/terminal/TerminalDock.tsx` |
 | Detected task definitions | `detectProjectTasks` in `electron/main.cjs` |
 | Native filesystem/process behavior | `electron/main.cjs` |
+| Workspace trust persistence and enforcement | `electron/workspace-trust.cjs` and `electron/main.cjs` |
 | Safe renderer API | `electron/preload.cjs` and `src/types.ts` |
 | Visual styling | `src/styles.css` |
 
@@ -141,11 +148,11 @@ Do not add a renderer IPC that accepts an arbitrary command string. The
 `postinstall` script fixes execute permission on node-pty's prebuilt macOS
 helper; keep it when changing package tooling.
 
-Ace sessions are document state, not disposable render details. When adding
-editor features, preserve the rule that switching tabs calls `setSession`
+Monaco models are document state, not disposable render details. When adding
+editor features, preserve the rule that switching tabs calls `setModel`
 instead of replacing text. Programmatic formatter/project updates must suppress
 dirty tracking, and dirty buffers must not be overwritten by background
-analysis refreshes.
+analysis refreshes. Dispose models and subscriptions together when a tab closes.
 
 ## Adding a language analyzer
 
@@ -161,7 +168,7 @@ Then update:
 - file-kind recognition in `src/analysis/analyzeProject.ts`
 - analyzer dispatch in `analyzeProject`
 - `supportedExtensions` in `electron/main.cjs`
-- Ace mode imports and extension mapping in the editor
+- Monaco language mapping and worker routing in the editor
 - analysis fixtures and graph tests
 
 Avoid adding language-specific parsing conditions to either map.
@@ -179,6 +186,12 @@ The renderer cannot call Node.js directly. For every new desktop action:
 
 Do not build shell command strings from renderer input. Prefer executable plus
 argument arrays.
+
+Any new command that starts a process, opens an external application, or asks a
+developer tool to inspect project code must call `requireTrustedWorkspace` in
+the Electron handler. A disabled React button is user guidance, not sufficient
+enforcement. Safe reading, editing, mapping, searching, copying, and revealing
+remain available in Restricted Mode.
 
 ## Crash recovery
 
@@ -234,11 +247,11 @@ Vite creates:
 
 - a React vendor chunk
 - an icon vendor chunk
-- an editor-engine chunk for Ace
+- an editor-engine chunk for Monaco
 - dynamic feature chunks for the editor and logic map
 - hashed entry, chunk, and asset paths
 
-Do not statically import Ace or the logic renderer into application startup.
+Do not statically import Monaco or the logic renderer into application startup.
 After changing imports, inspect `dist/index.html` and ensure the editor engine
 is not preloaded.
 

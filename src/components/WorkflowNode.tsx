@@ -1,9 +1,12 @@
 import {
   Braces,
+  Columns3,
+  Database,
   FileCode2,
   Folder,
   Globe2,
   Layers3,
+  Table2,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import type { VisualNode, WorkflowPosition } from "../types";
@@ -32,6 +35,9 @@ function NodeIcon({ node }: { node: VisualNode }) {
   if (node.kind === "folder") return <Folder size={15} />;
   if (node.kind === "file") return <FileCode2 size={15} />;
   if (node.kind === "external") return <Globe2 size={15} />;
+  if (node.kind === "database") return <Database size={15} />;
+  if (node.kind === "table") return <Table2 size={15} />;
+  if (node.kind === "column") return <Columns3 size={15} />;
   return <Braces size={15} />;
 }
 
