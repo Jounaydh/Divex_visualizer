@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 const {
   createProjectWatcherService,
   shouldRefreshProject,
-} = require("./project-watcher.cjs") as {
+} = require("./watcher.cjs") as {
   createProjectWatcherService: (options: {
     debounceMs: number;
     createWatcher: (
@@ -33,6 +33,8 @@ describe("project watcher", () => {
   it("filters generated folders and unsupported files", () => {
     expect(shouldRefreshProject("lib/main.dart")).toBe(true);
     expect(shouldRefreshProject("src/App.java")).toBe(true);
+    expect(shouldRefreshProject("src/App.tsx")).toBe(true);
+    expect(shouldRefreshProject("src/new-folder")).toBe(true);
     expect(shouldRefreshProject("build/generated.dart")).toBe(false);
     expect(shouldRefreshProject("README.md")).toBe(false);
   });

@@ -11,7 +11,11 @@ import {
   sourceLanguagesForKinds,
 } from "./languages/registry";
 
-function buildFolderTree(files: AnalyzedFile[], projectName: string): FolderNode {
+function buildFolderTree(
+  files: AnalyzedFile[],
+  projectName: string,
+  projectFolders: string[] = [],
+): FolderNode {
   const root: FolderNode = {
     id: "folder:",
     name: projectName,
@@ -20,13 +24,10 @@ function buildFolderTree(files: AnalyzedFile[], projectName: string): FolderNode
     files: [],
   };
 
-  for (const file of files) {
-    const parts = file.path.split("/");
-    const fileName = parts.pop();
-    if (!fileName) continue;
+  const ensureFolderPath = (folderPath: string) => {
+    const parts = folderPath.split("/").filter(Boolean);
     let current = root;
     let currentPath = "";
-
     for (const segment of parts) {
       currentPath = currentPath ? `${currentPath}/${segment}` : segment;
       let folder = current.folders.find((item) => item.name === segment);
@@ -42,6 +43,16 @@ function buildFolderTree(files: AnalyzedFile[], projectName: string): FolderNode
       }
       current = folder;
     }
+    return current;
+  };
+
+  projectFolders.forEach(ensureFolderPath);
+
+  for (const file of files) {
+    const parts = file.path.split("/");
+    const fileName = parts.pop();
+    if (!fileName) continue;
+    const current = ensureFolderPath(parts.join("/"));
     current.files.push(file);
   }
 
@@ -82,7 +93,8 @@ export function analyzeProject(payload: ProjectPayload): AnalyzedProject {
   return {
     name: payload.name,
     rootPath: payload.rootPath,
-    root: buildFolderTree(files, payload.name),
+    environment: payload.environment,
+    root: buildFolderTree(files, payload.name, payload.folders),
     files,
     languages,
     languageSummary: projectLanguageSummary(

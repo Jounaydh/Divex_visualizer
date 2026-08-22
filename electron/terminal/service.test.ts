@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const {
   createTerminalService,
   resolveTerminalDirectory,
-} = require("./terminal-service.cjs") as {
+} = require("./service.cjs") as {
   createTerminalService: (options?: {
     ptyModule?: {
       spawn: ReturnType<typeof vi.fn>;

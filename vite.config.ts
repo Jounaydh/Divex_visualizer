@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { contentSecurityPolicy } from "./src/config/contentSecurityPolicy";
 
 function vendorChunk(id: string) {
   const moduleId = id.replaceAll("\\", "/");
@@ -16,11 +17,22 @@ function vendorChunk(id: string) {
   return undefined;
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   // Packaged Electron windows load dist/index.html through file://, so assets
   // must resolve relative to that file instead of from the filesystem root.
   base: "./",
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "divex-content-security-policy",
+      transformIndexHtml(html) {
+        return html.replace(
+          "__DIVEX_CONTENT_SECURITY_POLICY__",
+          contentSecurityPolicy(command === "serve"),
+        );
+      },
+    },
+  ],
   server: {
     port: 5173,
     strictPort: true,
@@ -40,4 +52,4 @@ export default defineConfig({
     // The editor remains optional and is loaded only when source view opens.
     chunkSizeWarningLimit: 950,
   },
-});
+}));

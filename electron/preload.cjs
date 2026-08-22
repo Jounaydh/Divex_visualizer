@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("divex", {
   chooseProject: () => ipcRenderer.invoke("project:choose"),
+  chooseWslProject: () => ipcRenderer.invoke("project:choose-wsl"),
+  getWslStatus: () => ipcRenderer.invoke("app:wsl-status"),
+  getWorkspaceTrust: (args) => ipcRenderer.invoke("workspace-trust:get", args),
+  setWorkspaceTrust: (args) => ipcRenderer.invoke("workspace-trust:set", args),
   onProjectLoadProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on("project:load-progress", listener);
@@ -22,6 +26,10 @@ contextBridge.exposeInMainWorld("divex", {
   },
   renameProjectEntry: (args) =>
     ipcRenderer.invoke("project:rename-entry", args),
+  createProjectEntry: (args) =>
+    ipcRenderer.invoke("project:create-entry", args),
+  duplicateProjectEntry: (args) =>
+    ipcRenderer.invoke("project:duplicate-entry", args),
   deleteProjectEntry: (args) =>
     ipcRenderer.invoke("project:delete-entry", args),
   revealProjectEntry: (args) =>
@@ -32,6 +40,9 @@ contextBridge.exposeInMainWorld("divex", {
     ipcRenderer.invoke("project:open-entry", args),
   openProjectTerminal: (args) =>
     ipcRenderer.invoke("project:open-terminal", args),
+  listTerminalProfiles: (args) =>
+    ipcRenderer.invoke("terminal:list-profiles", args),
+  openTerminalLink: (args) => ipcRenderer.invoke("terminal:open-link", args),
   listProjectTasks: (args) =>
     ipcRenderer.invoke("project:list-tasks", args),
   runProjectTask: (args) =>
@@ -53,11 +64,29 @@ contextBridge.exposeInMainWorld("divex", {
     ipcRenderer.on("terminal:event", listener);
     return () => ipcRenderer.removeListener("terminal:event", listener);
   },
+  startDebugSession: (args) => ipcRenderer.invoke("debug:start", args),
+  setDebugBreakpoints: (args) =>
+    ipcRenderer.invoke("debug:set-breakpoints", args),
+  getDebugStack: (args) => ipcRenderer.invoke("debug:stack", args),
+  getDebugScopes: (args) => ipcRenderer.invoke("debug:scopes", args),
+  getDebugVariables: (args) => ipcRenderer.invoke("debug:variables", args),
+  controlDebugSession: (args) => ipcRenderer.invoke("debug:control", args),
+  stopDebugSession: (args) => ipcRenderer.invoke("debug:disconnect", args),
+  installPythonDebugAdapter: (args) =>
+    ipcRenderer.invoke("debug:install-python-adapter", args),
+  onDebugEvent: (callback) => {
+    const listener = (_event, debugEvent) => callback(debugEvent);
+    ipcRenderer.on("debug:event", listener);
+    return () => ipcRenderer.removeListener("debug:event", listener);
+  },
   shareProjectEntry: (args) =>
     ipcRenderer.invoke("project:share-entry", args),
   pasteProjectEntry: (args) =>
     ipcRenderer.invoke("project:paste-entry", args),
   saveProjectFile: (args) => ipcRenderer.invoke("project:save-file", args),
+  listEditorRecoveries: (args) => ipcRenderer.invoke("editor:list-recovery", args),
+  writeEditorRecovery: (args) => ipcRenderer.invoke("editor:write-recovery", args),
+  clearEditorRecovery: (args) => ipcRenderer.invoke("editor:clear-recovery", args),
   formatDartFile: (args) => ipcRenderer.invoke("project:format-dart", args),
   analyzeFlutter: (args) => ipcRenderer.invoke("project:analyze-flutter", args),
   getGitStatus: (args) => ipcRenderer.invoke("git:status", args),
@@ -68,6 +97,11 @@ contextBridge.exposeInMainWorld("divex", {
   unstageAllGitChanges: (args) =>
     ipcRenderer.invoke("git:unstage-all", args),
   commitGitChanges: (args) => ipcRenderer.invoke("git:commit", args),
+  initializeGitRepository: (args) => ipcRenderer.invoke("git:initialize", args),
+  changeGitBranch: (args) => ipcRenderer.invoke("git:change-branch", args),
+  syncGitRepository: (args) => ipcRenderer.invoke("git:sync", args),
+  stashGitChanges: (args) => ipcRenderer.invoke("git:stash", args),
+  discardGitChanges: (args) => ipcRenderer.invoke("git:discard", args),
   reportRendererError: (report) =>
     ipcRenderer.invoke("app:report-renderer-error", report),
   reloadRenderer: (args) =>

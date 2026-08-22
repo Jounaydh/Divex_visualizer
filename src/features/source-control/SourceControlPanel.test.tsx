@@ -62,7 +62,10 @@ describe("SourceControlPanel", () => {
         rootPath="/project"
         enabled
         refreshKey={0}
+        autoRefreshOnFocus
+        confirmDestructiveActions
         onOpenFile={vi.fn()}
+        onRepositoryChanged={vi.fn()}
       />,
     );
 
@@ -79,6 +82,63 @@ describe("SourceControlPanel", () => {
       expect(stageGitFile).toHaveBeenCalledWith({
         rootPath: "/project",
         filePath: "lib/main.dart",
+      }),
+    );
+  });
+
+  it("creates a branch from the branch workflow menu", async () => {
+    const getGitStatus = vi.fn().mockResolvedValue({
+      success: true,
+      output: "Refreshed.",
+      status: {
+        available: true,
+        isRepository: true,
+        repositoryRoot: "/project",
+        branch: "main",
+        detached: false,
+        ahead: 0,
+        behind: 0,
+        branches: ["main"],
+        remotes: ["origin"],
+        entries: [],
+      },
+    });
+    const changeGitBranch = vi.fn().mockResolvedValue({
+      success: true,
+      output: "Created and switched.",
+    });
+    Object.defineProperty(window, "divex", {
+      configurable: true,
+      value: {
+        getGitStatus,
+        changeGitBranch,
+        platform: "win32",
+      } as unknown as NonNullable<Window["divex"]>,
+    });
+
+    render(
+      <SourceControlPanel
+        rootPath="/project"
+        enabled
+        refreshKey={0}
+        autoRefreshOnFocus={false}
+        confirmDestructiveActions
+        onOpenFile={vi.fn()}
+        onRepositoryChanged={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /main/ }));
+    fireEvent.change(screen.getByLabelText("New branch name"), {
+      target: { value: "feature/settings" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(changeGitBranch).toHaveBeenCalledWith({
+        rootPath: "/project",
+        branch: "feature/settings",
+        create: true,
       }),
     );
   });

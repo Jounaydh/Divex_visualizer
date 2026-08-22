@@ -1,42 +1,10 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
-
-const supportedExtensions = new Set([
-  ".cjs",
-  ".css",
-  ".dart",
-  ".htm",
-  ".html",
-  ".java",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".py",
-  ".pyw",
-  ".yaml",
-  ".yml",
-  ".json",
-  ".gradle",
-  ".properties",
-]);
-const ignoredDirectories = new Set([
-  ".git",
-  ".gradle",
-  ".dart_tool",
-  ".idea",
-  ".next",
-  ".pytest_cache",
-  ".vscode",
-  ".venv",
-  "__pycache__",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "out",
-  "target",
-  "venv",
-]);
+const {
+  isIgnoredDirectory,
+  isSupportedProjectFile,
+} = require("./file-policy.cjs");
+const { projectEnvironment } = require("./paths.cjs");
 const MAX_FILES = 2000;
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
 const FILE_READ_CONCURRENCY = 16;
@@ -74,6 +42,7 @@ async function mapWithConcurrency(items, concurrency, operation, onItem) {
 async function scanProjectMetadata(rootPath, onProgress) {
   const candidates = [];
   const directories = [rootPath];
+  const projectFolders = [];
   let cursor = 0;
 
   reportProgress(onProgress, {
@@ -101,14 +70,14 @@ async function scanProjectMetadata(rootPath, onProgress) {
         if (entry.isSymbolicLink()) return;
         const absolutePath = path.join(directory, entry.name);
         if (entry.isDirectory()) {
-          if (!ignoredDirectories.has(entry.name.toLowerCase())) {
+          if (!isIgnoredDirectory(entry.name)) {
             directories.push(absolutePath);
+            projectFolders.push(relativeProjectPath(rootPath, absolutePath));
           }
           return;
         }
         if (!entry.isFile()) return;
-        const extension = path.extname(entry.name).toLowerCase();
-        if (!supportedExtensions.has(extension)) return;
+        if (!isSupportedProjectFile(entry.name)) return;
         candidates.push({
           absolutePath,
           path: relativeProjectPath(rootPath, absolutePath),
@@ -153,7 +122,7 @@ async function scanProjectMetadata(rootPath, onProgress) {
     },
   );
 
-  return metadata.filter(Boolean);
+  return { metadata: metadata.filter(Boolean), folders: projectFolders };
 }
 
 function cachedProject(rootPath) {
@@ -176,7 +145,7 @@ function storeProjectCache(rootPath, cache) {
 }
 
 async function readProjectFiles(rootPath, onProgress) {
-  const metadata = await scanProjectMetadata(rootPath, onProgress);
+  const { metadata, folders } = await scanProjectMetadata(rootPath, onProgress);
   const previousCache = cachedProject(rootPath);
   const nextCache = new Map();
   let cachedFiles = 0;
@@ -230,20 +199,22 @@ async function readProjectFiles(rootPath, onProgress) {
   );
 
   storeProjectCache(rootPath, nextCache);
-  return { files: files.filter(Boolean), cachedFiles, readFiles };
+  return { files: files.filter(Boolean), folders, cachedFiles, readFiles };
 }
 
 async function loadProject(rootPath, onProgress) {
   const resolvedRoot = path.resolve(rootPath);
   const startedAt = performance.now();
-  const { files, cachedFiles, readFiles } = await readProjectFiles(
+  const { files, folders, cachedFiles, readFiles } = await readProjectFiles(
     resolvedRoot,
     onProgress,
   );
   return {
     name: path.basename(resolvedRoot),
     rootPath: resolvedRoot,
+    environment: projectEnvironment(resolvedRoot),
     files,
+    folders,
     loadSummary: {
       totalFiles: files.length,
       cachedFiles,

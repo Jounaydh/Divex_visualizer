@@ -3,7 +3,162 @@
 This records the current prototype's completed work. The repository does not
 yet use formal releases.
 
-## Unreleased
+## 0.8.0 — 2026-08-19
+
+For the baseline, implementation files, tests, generated packages, and current
+handoff status, see the detailed
+[Windows changes since the Mac/V2 sync](WINDOWS_CHANGES_SINCE_MAC_SYNC.md).
+
+### Windows UI reliability
+
+- Corrected the application-shell grid rows so the workspace fills the full
+  Electron window instead of collapsing into the upper portion of the screen.
+- Kept the workspace-trust banner and terminal dock in their own rows so either
+  feature can open without shrinking or overlapping the main workbench.
+- Added a layout regression test and visually checked the maps, fullscreen
+  mode, editor tools, side panels, and maximized Windows layout.
+
+### Final security hardening
+
+- Added a deny-by-default production Content Security Policy with self-only
+  scripts, connections, and workers and no inline/evaluated scripts.
+- Enforced the Chromium sandbox globally and per window, retained context
+  isolation, and disabled renderer/subframe Node.js, webviews, experimental
+  features, insecure content, browser permissions, popups, and page navigation.
+- Routed every IPC handler through registered-window, main-frame, renderer-URL,
+  window-role, and active-project-root authorization.
+- Limited Divex Mini to the small IPC allowlist required by its companion view.
+- Expanded workspace trust with exact project-script permission and risk
+  details, including user-account filesystem/network access and no auto-run.
+- Added a fail-closed extension policy that keeps third-party and in-process
+  extensions disabled until a capability-scoped separate host exists.
+- Added focused CSP, window policy, IPC authorization, extension policy, trust
+  service, and trust-dialog tests.
+
+### Advanced editor workspace
+
+- Added two independently focused editor groups that share each file's Ace
+  session, breakpoints, annotations, buffer, and undo history.
+- Added toggleable clickable minimaps and an embedded side-by-side comparison
+  against the active file's saved or externally changed version.
+- Added preview tabs, explicit/double-click pinning, a bounded recently closed
+  menu, and `Command/Ctrl+Shift+T` restoration.
+- Added a workspace diagnostics panel for analyzer results and unresolved
+  external file changes with exact-line navigation.
+- Added three-way external-change detection that preserves dirty buffers and
+  blocks overwrite until the user keeps the local buffer or reloads disk.
+- Added focused tests for preview replacement, recent-file history, diff rows,
+  and external-conflict classification.
+
+### TypeScript and TSX support
+
+- Added `.ts`, `.tsx`, `.mts`, `.cts`, and declaration-file scanning, watching,
+  editor modes, project settings, language summaries, and map integration.
+- Added lightweight TypeScript extraction for classes, interfaces, types,
+  enums, namespaces, constructors, typed functions/methods/variables, and TSX
+  components, with local mixed JavaScript/TypeScript import resolution.
+- Added detected `tsconfig.json` checking, terminal problem matching, and
+  Node.js 22 active-file execution for erasable TypeScript syntax.
+
+### Improved terminals and tasks
+
+- Added installed PowerShell, Windows PowerShell, Command Prompt, Git Bash, and
+  WSL shell profiles shared by integrated and external terminals.
+- Added split panes, scrollback search, safe clickable web links, and per-root
+  profile memory.
+- Added validated `divex.tasks.json` custom tasks with integrated/external run
+  actions and bounded executable-plus-argument definitions.
+- Added incremental task problem matching and clickable source locations for
+  Dart, Python, TypeScript, Java, GCC, and common compiler output.
+
+### Workspace trust
+
+- Added a remembered per-folder trust decision with an explicit first-open
+  choice between Trust Workspace and Restricted Mode.
+- Added a Restricted Mode banner, trust-management dialog, project-menu action,
+  command-palette action, and trust revocation.
+- Disabled terminals, task discovery/execution, active-file runs, external file
+  launches, Flutter analysis, debugger launches, and adapter installation for
+  untrusted native and WSL folders.
+- Enforced trust inside Electron and stopped owned terminal/debug sessions when
+  trust is revoked.
+- Added persistence, malformed-store, prompt, banner, and restricted Explorer
+  tests.
+
+### Debugger integration
+
+- Added a managed Debug Adapter Protocol client with framed messaging,
+  timeouts, session ownership, and native/WSL source-path translation.
+- Added Python `debugpy` and Dart/Flutter adapter launches without exposing
+  arbitrary executables or launch configurations to the renderer.
+- Added persistent editor-gutter breakpoints, current-line decoration,
+  continue/pause/stop, and step over/into/out controls.
+- Added variables, nested values, scopes, call stacks, source navigation, and
+  a bounded Debug Console.
+- Added explicit one-click Python adapter setup and focused protocol/UI tests.
+
+### Source organization
+
+- Split editor recovery lifecycle, recovery UI, language helpers, and document
+  contracts out of the editor coordinator into focused modules.
+- Moved project live-refresh ownership into the project-settings feature.
+- Centralized cross-platform Explorer filename rules and added focused tests.
+- Corrected and expanded the documented directory map and code ownership guide.
+
+### Recovery and dependable editing
+
+- Added disk-backed, per-project recovery journals for unsaved editor buffers.
+- Added automatic recovery discovery and per-file/bulk restore or discard UI.
+- Added recovery status feedback, hidden-window flushing, and failed-save
+  preservation across multiple open tabs.
+- Replaced direct saves with root-contained, symlink-safe, synced temporary
+  writes followed by atomic replacement.
+- Routed native and WSL Dart formatting through temporary copies and the atomic
+  save boundary.
+- Added atomic-save and recovery-storage tests.
+
+### Git workflow and project settings
+
+- Added repository initialization, branch creation/switching, fetch,
+  fast-forward-only pull, non-force push, and tracked/untracked stashing.
+- Added confirmed per-file and all-working-tree discard actions while keeping
+  staged content intact.
+- Added persistent project defaults for map layout, new-file type, native/WSL
+  live refresh, Git focus refresh, and discard confirmation.
+- Refreshes the project model after Git operations that change files.
+- Added Git service, Source Control, settings storage, and settings-dialog tests.
+
+### Complete file management
+
+- Added Explorer toolbar and context actions for creating files and folders,
+  duplicating entries, and refreshing the project.
+- Added keyboard shortcuts and drag-and-drop moves between folders or back to
+  the project root.
+- Centralized create, duplicate, copy, and move behavior in a root-contained
+  Electron service shared by native Windows and WSL projects.
+- Added non-destructive conflict handling with deterministic suggested names;
+  file operations never silently overwrite an existing destination.
+- Preserved empty folders in project payloads and WSL watcher snapshots so
+  directory-only changes remain visible and trigger refreshes.
+- Added service, loader, watcher, and Explorer interaction tests.
+
+### Codebase organization, Python, and WSL
+
+- Organized Electron project, platform, source-control, and terminal services
+  into focused directories and removed task/path/process logic from the desktop
+  entrypoint.
+- Centralized supported-file and ignored-directory policy for loading and live
+  watching, including Python TOML/INI/CFG/text project files.
+- Confirmed Python symbol/import analysis with focused tests and added detected
+  compile and pytest tasks for standard Python projects.
+- Added WSL distribution discovery and a dedicated WSL folder picker.
+- Added environment-aware Linux paths, Git, tasks, active-file execution,
+  formatting/analyzer routing, integrated terminals, and external terminals.
+- Added WSL polling refresh after verifying that recursive Windows file events
+  are unavailable for `\\wsl.localhost` projects.
+- Added a real Ubuntu smoke test for loading, Python tasks, Linux Git, saving,
+  and live refresh, plus focused WSL/path/task tests.
+- Added codebase, language-support, and WSL study documentation.
 
 ### Windows V2 integration
 

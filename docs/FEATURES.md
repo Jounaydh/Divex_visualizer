@@ -21,11 +21,57 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
   the visual workspace.
 - Selects folders, files, and code symbols without requiring coding knowledge.
 - Displays project totals for files, relationships, and symbols.
+- Creates files and folders from a compact toolbar or the context menu and
+  keeps empty folders visible after refresh.
+- Duplicates files or complete folder trees with conflict-safe names such as
+  `main copy.py` and `main copy 2.py`.
+- Moves files and folders by drag-and-drop or cut/paste. Files can be dropped
+  onto another file to target its parent folder, and blank Explorer space is
+  the project-root destination.
 - Offers context actions for refresh, rename, delete, absolute or relative path
   copying, reveal in the operating system, external open, terminal open, share,
   cut, copy, and paste where the host supports them.
+- Supports `Ctrl/Cmd+N`, `Ctrl/Cmd+Shift+N`, `Ctrl/Cmd+D`, cut/copy/paste,
+  `F2`, and Delete shortcuts on focused entries.
+- Never overwrites an existing item during create, duplicate, copy, or move;
+  collisions receive a safe suggested name.
+- Applies the same root-contained operations to native Windows and WSL
+  projects. WSL deletion remains explicitly permanent.
 - Ignores generated or dependency-heavy folders such as `.git`, `.dart_tool`,
   `build`, `dist`, and `node_modules`.
+
+## Project settings
+
+- Opens from the project switcher and persists independently for each project
+  root without adding configuration files to the repository.
+- Sets the default map, direction, free positioning, and new-file extension.
+- Controls native/WSL live refresh, Git refresh-on-focus, and confirmation
+  before destructive Git discards.
+- Validates stored values and safely restores defaults after corrupt storage.
+
+## Dependable editing and recovery
+
+- Journals dirty editor buffers to the app data directory after a short
+  debounce and flushes them when the window is hidden or the editor unmounts.
+- Detects recovery data when a project opens, enters the affected source file,
+  and offers per-file or bulk restore/discard choices.
+- Keeps recovery data after a failed save and clears it only after an atomic
+  disk save or an explicit discard.
+- Writes saves through a synced temporary file in the destination directory and
+  atomically renames it over the original, preserving the original on failure.
+- Rejects saves through symbolic links or outside the validated project root.
+- Formats Dart through a temporary copy and performs the final replacement with
+  the same atomic save path on native Windows and WSL projects.
+- Retains the normal unsaved-changes warning for clean application shutdown.
+
+## Source-control workflow
+
+- Initializes repositories and creates or switches local branches.
+- Fetches with pruning, pulls fast-forward-only, and pushes without force.
+- Stashes tracked and untracked work and restores the latest stash.
+- Discards one or all unstaged/untracked changes with configurable confirmation
+  while preserving staged content.
+- Reloads the project model after Git operations that change working files.
 
 ## Project loading
 
@@ -194,6 +240,10 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Uses the open-source Ace editor with line numbers, familiar selection
   behavior, and syntax coloring.
 - Opens multiple files as tabs and keeps one Ace EditSession per document.
+- Supports two independently focused editor groups with shared document
+  sessions, separate active files, and a one-click split/close action.
+- Uses single-click preview tabs, double-click or explicit pinning for durable
+  tabs, and `Command/Ctrl+Shift+T` plus a menu for recently closed files.
 - Preserves each tab's text buffer, undo history, cursor, and scroll position
   while switching files.
 - Keeps editor sessions mounted when returning temporarily to a visual map.
@@ -210,8 +260,16 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Provides a per-file symbol outline that navigates directly to definitions.
 - Supports font sizing, word wrap, whitespace visibility, and 2/4-space tab
   preferences.
-- Supports Dart, Java, Python, HTML, JavaScript, CSS, YAML, JSON, Gradle, and
-  properties file modes where Ace provides them.
+- Includes a toggleable, clickable source minimap in either editor group.
+- Compares the active buffer with its last saved or externally changed content
+  in an embedded side-by-side diff editor.
+- Detects files changed outside Divex: clean buffers reload automatically,
+  while dirty buffers are preserved and require an explicit keep/reload choice
+  before they can overwrite disk.
+- Collects analyzer and external-change problems in a workspace diagnostics
+  panel that opens the affected source line.
+- Supports Dart, Java, Python, TypeScript, TSX, HTML, JavaScript, CSS, YAML,
+  JSON, Gradle, and properties file modes where Ace provides them.
 - Saves through validated Electron IPC.
 - Formats Dart files with the locally installed Dart SDK.
 - Runs `flutter analyze --no-pub` for an opened Flutter project and shows the
@@ -224,6 +282,18 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 ## Integrated terminal and tasks
 
 - Opens a docked interactive terminal with `Control+Backtick`.
+- Detects PowerShell, Windows PowerShell, Command Prompt, and Git Bash profiles
+  on Windows, plus distribution-aware WSL shells.
+- Remembers the selected profile per workspace and uses it for integrated and
+  external terminal windows.
+- Splits the terminal into two independently focused panes.
+- Searches terminal scrollback with `Ctrl+F` and opens validated web links in
+  the default browser.
+- Loads validated custom tasks from `divex.tasks.json` without accepting raw
+  renderer-provided command strings.
+- Runs each task in an integrated terminal or the selected external profile.
+- Extracts common Dart, Python, TypeScript, Java, and compiler diagnostics into
+  a clickable per-session Problems list.
 - Uses Xterm.js for terminal rendering and node-pty for a real pseudoterminal.
 - Supports multiple shell, task, and active-file sessions as tabs.
 - Streams terminal output directly to Xterm without placing every output chunk
@@ -236,9 +306,9 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Terminates one session or closes every session.
 - Shows running/exited state and task exit codes.
 - Keeps an explicit operating-system terminal fallback.
-- Discovers npm scripts and Flutter, Maven, Gradle, Make, Python, and Java
+- Discovers npm scripts and Flutter, Maven, Gradle, Make, Python, TypeScript, and Java
   project tasks.
-- Runs detected tasks and Dart, Python, Java, and JavaScript active files
+- Runs detected tasks and Dart, Python, Java, JavaScript, and erasable TypeScript active files
   inside managed terminal tabs.
 - Runs build tasks with `Command/Ctrl+Shift+B`.
 - Limits each Electron window to 12 terminal sessions and bounds individual
@@ -246,10 +316,70 @@ planned are kept in [Project status](PROJECT_STATUS.md) and the
 - Owns terminal sessions by Electron renderer and kills them on renderer
   destruction, project changes, or explicit closure.
 
+## Debugger
+
+- Adds persistent per-project breakpoints from the editor gutter.
+- Runs approved Python and Dart/Flutter debug adapters through a managed DAP
+  client outside the renderer.
+- Supports native Windows and WSL launch paths without mixing environments.
+- Provides start, pause, continue, stop, step over, step into, and step out.
+- Opens the paused source line and exposes selectable call-stack frames.
+- Loads scopes, nested variables, values, and runtime types on demand.
+- Captures adapter stdout and stderr in a bounded Debug Console.
+- Offers explicit one-click `debugpy` setup when Python support is missing.
+- Owns sessions per Electron window and terminates them with their owner.
+
+## Workspace trust and Restricted Mode
+
+- Prompts for **Trust Workspace** or **Open in Restricted Mode** the first time
+  an exact native or WSL folder is opened.
+- Remembers trusted and restricted decisions outside the repository and allows
+  trust to be reviewed or revoked from the project menu.
+- Keeps maps, static analysis, editing, navigation, recovery, and file
+  management available while restricted.
+- Disables terminals, tasks, project-file execution, external file launching,
+  Flutter analysis, debugging, and debug-adapter setup while restricted.
+- Checks trust again inside Electron before every execution entry point instead
+  of relying only on disabled renderer controls.
+- Stops owned terminal and debugger sessions when trust is revoked.
+- Shows the exact file, script/task, terminal, debugger, external-application,
+  and extension permissions affected by the decision, including the fact that
+  trusted project commands inherit the user's filesystem and network access.
+- Never runs project scripts automatically when a folder is opened.
+
+## Desktop security hardening
+
+- Enforces sandboxing globally and per window with context isolation and no
+  renderer or subframe Node.js integration.
+- Uses a deny-by-default production CSP with self-only scripts, connections,
+  and workers; frames, objects, forms, media, manifests, and base-URL changes
+  are blocked.
+- Denies browser permissions, page navigation, child windows, and webviews.
+- Validates every IPC sender against a registered Divex window, its main frame,
+  expected renderer URL, role-specific channel list, and active project root.
+- Limits Divex Mini to the small IPC set required by its companion workflow.
+- Keeps third-party extensions disabled until a separate capability-scoped,
+  resource-limited extension host exists.
+
+## WSL projects on Windows
+
+- Detects installed user WSL distributions and ignores infrastructure-only
+  distributions such as `docker-desktop` in the project picker.
+- Opens, scans, edits, saves, searches, maps, and refreshes projects directly
+  inside the selected Linux filesystem.
+- Displays the active WSL distribution with the project language summary.
+- Copies Linux absolute paths instead of internal Windows UNC transport paths.
+- Runs Git, detected tasks, active files, and project shells inside the selected
+  distribution with Linux paths and tools.
+- Uses bounded supported-file polling for live refresh and Divex Mini because
+  recursive Windows file events are unavailable for WSL UNC folders.
+- Provides a real temporary-project integration check through
+  `npm run test:wsl`.
+
 ## Current analyzer coverage
 
 Shared adapters currently extract symbols and local dependencies from
-Dart/Flutter, Python, Java, HTML, JavaScript, and CSS. Dart and Flutter also
+Dart/Flutter, Python, Java, TypeScript/TSX, HTML, JavaScript, and CSS. Dart and Flutter also
 extract:
 
 - imports and resolved project-local imports
@@ -261,3 +391,8 @@ extract:
 These are lightweight static parsers suitable for visualization, not complete
 language services. Rich call/create/inheritance relationships remain
 Dart-focused.
+
+Python recognizes classes, functions, async functions, methods, module
+variables, absolute imports, and relative imports. Python projects also expose
+compile and pytest tasks when standard project/test markers are present. See
+[Language support](LANGUAGE_SUPPORT.md) for the coverage matrix.

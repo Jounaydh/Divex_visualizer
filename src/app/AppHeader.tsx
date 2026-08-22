@@ -5,6 +5,7 @@ import {
   FileCode2,
   FolderOpen,
   Hammer,
+  Laptop,
   PanelTopOpen,
   Play,
   Search,
@@ -20,6 +21,8 @@ interface AppHeaderProps {
   terminalMenuOpen: boolean;
   terminalEnabled: boolean;
   miniEnabled: boolean;
+  wslEnabled: boolean;
+  wslLabel: string;
   tasks: ProjectTask[];
   canRunActiveFile: boolean;
   hasTerminalSessions: boolean;
@@ -31,6 +34,7 @@ interface AppHeaderProps {
   onToggleTerminalMenu: () => void;
   onCloseMenus: () => void;
   onOpenProject: () => void;
+  onOpenWslProject: () => void;
   onOpenMini: () => void;
   onNewTerminal: () => void;
   onOpenExternalTerminal: () => void;
@@ -50,6 +54,8 @@ export function AppHeader({
   terminalMenuOpen,
   terminalEnabled,
   miniEnabled,
+  wslEnabled,
+  wslLabel,
   tasks,
   canRunActiveFile,
   hasTerminalSessions,
@@ -61,6 +67,7 @@ export function AppHeader({
   onToggleTerminalMenu,
   onCloseMenus,
   onOpenProject,
+  onOpenWslProject,
   onOpenMini,
   onNewTerminal,
   onOpenExternalTerminal,
@@ -136,6 +143,18 @@ export function AppHeader({
                   <FolderOpen size={14} />
                   <span>Open Folder…</span>
                 </button>
+                {!isMac && (
+                  <button
+                    type="button"
+                    disabled={!wslEnabled}
+                    title={wslLabel}
+                    onClick={() => runAndClose(onOpenWslProject)}
+                  >
+                    <Laptop size={14} />
+                    <span>Open WSL Folder…</span>
+                    <small>{wslLabel}</small>
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={!miniEnabled}

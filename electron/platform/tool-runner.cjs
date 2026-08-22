@@ -1,3 +1,4 @@
+// Native SDK command resolution, including Windows .cmd/.bat launchers.
 const { execFile } = require("node:child_process");
 const path = require("node:path");
 const { promisify } = require("node:util");

@@ -12,6 +12,7 @@ import {
 import { htmlAdapter } from "./html";
 import { buildJavaTypeIndex, javaAdapter } from "./java";
 import { javascriptAdapter } from "./javascript";
+import { typescriptAdapter } from "./typescript";
 import {
   fileKindForExtension,
   isSourceLanguage,
@@ -59,6 +60,7 @@ const ADAPTERS: LanguageAdapter[] = [
   pythonAdapter,
   javaAdapter,
   javascriptAdapter,
+  typescriptAdapter,
   htmlAdapter,
   cssAdapter,
 ];

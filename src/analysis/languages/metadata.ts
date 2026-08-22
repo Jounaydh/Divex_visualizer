@@ -2,19 +2,27 @@ import type { FileKind, SourceLanguage } from "../../types";
 
 const KIND_BY_EXTENSION: Record<string, FileKind> = {
   cjs: "javascript",
+  cfg: "config",
   css: "css",
   dart: "dart",
   htm: "html",
   html: "html",
+  ini: "config",
   java: "java",
   js: "javascript",
   jsx: "javascript",
   mjs: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  mts: "typescript",
+  cts: "typescript",
   py: "python",
   pyw: "python",
   gradle: "config",
   json: "config",
   properties: "config",
+  toml: "config",
+  txt: "config",
   yaml: "config",
   yml: "config",
 };
@@ -25,6 +33,7 @@ const LANGUAGE_LABELS: Record<SourceLanguage, string> = {
   html: "HTML",
   java: "Java",
   javascript: "JavaScript",
+  typescript: "TypeScript",
   python: "Python",
 };
 
@@ -33,6 +42,7 @@ export const SOURCE_LANGUAGES: SourceLanguage[] = [
   "python",
   "java",
   "javascript",
+  "typescript",
   "html",
   "css",
 ];

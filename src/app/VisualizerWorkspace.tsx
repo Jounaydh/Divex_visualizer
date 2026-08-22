@@ -34,6 +34,9 @@ interface VisualizerWorkspaceProps {
   showCode: boolean;
   editorRevealLine: number | null;
   editorRevealKey: number;
+  breakpoints: Record<string, number[]>;
+  debugLocation: { filePath: string; line: number } | null;
+  executionEnabled: boolean;
   twoDZoom: number;
   logicZoom: number;
   workflowDirection: WorkflowDirection;
@@ -62,6 +65,7 @@ interface VisualizerWorkspaceProps {
     positions: Record<string, WorkflowPosition>,
   ) => void;
   onPersistFile: (path: string, content: string) => void;
+  onToggleBreakpoint: (path: string, line: number) => void;
 }
 
 function LoadingWorkspace({
@@ -89,6 +93,9 @@ export function VisualizerWorkspace({
   showCode,
   editorRevealLine,
   editorRevealKey,
+  breakpoints,
+  debugLocation,
+  executionEnabled,
   twoDZoom,
   logicZoom,
   workflowDirection,
@@ -113,6 +120,7 @@ export function VisualizerWorkspace({
   onTwoDPositionsChange,
   onLogicPositionsChange,
   onPersistFile,
+  onToggleBreakpoint,
 }: VisualizerWorkspaceProps) {
   const [editorFile, setEditorFile] = useState<AnalyzedFile | null>(null);
   useEffect(() => {
@@ -239,11 +247,15 @@ export function VisualizerWorkspace({
                     files={project.files}
                     projectName={project.name}
                     rootPath={project.rootPath}
+                    breakpoints={breakpoints}
+                    debugLocation={debugLocation}
+                    executionEnabled={executionEnabled}
                     revealLine={editorRevealLine}
                     revealKey={editorRevealKey}
                     onClose={onShowVisualizer}
                     onSelectFile={onOpenEditorFile}
                     onPersist={onPersistFile}
+                    onToggleBreakpoint={onToggleBreakpoint}
                   />
                 </div>
               )}

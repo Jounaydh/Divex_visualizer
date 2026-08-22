@@ -17,6 +17,7 @@ export type FileKind =
   | "python"
   | "html"
   | "javascript"
+  | "typescript"
   | "css"
   | "config"
   | "folder"
@@ -36,7 +37,10 @@ export type SymbolKind =
   | "method"
   | "variable"
   | "element"
-  | "selector";
+  | "selector"
+  | "type"
+  | "enum"
+  | "namespace";
 
 export type LogicalRelationKind =
   | "starts"
@@ -53,10 +57,17 @@ export interface ProjectFile {
   content: string;
 }
 
+export type ProjectEnvironment =
+  | { kind: "native"; platform: string }
+  | { kind: "wsl"; distribution: string; linuxPath: string }
+  | { kind: "sample" };
+
 export interface ProjectPayload {
   name: string;
   rootPath: string;
   files: ProjectFile[];
+  folders?: string[];
+  environment?: ProjectEnvironment;
   loadSummary?: ProjectLoadSummary;
 }
 
@@ -139,6 +150,7 @@ export interface FolderNode {
 export interface AnalyzedProject {
   name: string;
   rootPath: string;
+  environment?: ProjectEnvironment;
   root: FolderNode;
   files: AnalyzedFile[];
   languages: SourceLanguage[];
@@ -185,20 +197,96 @@ export interface ProjectMutationResult extends ProjectToolResult {
   project?: ProjectPayload;
   entryPath?: string;
   cancelled?: boolean;
+  conflict?: boolean;
+  unchanged?: boolean;
+  suggestedName?: string;
 }
 
 export interface ProjectTask {
   id: string;
   label: string;
   group: "build" | "test" | "run" | "other";
+  source?: "detected" | "custom";
+  detail?: string;
+  problemMatcher?: TerminalProblemMatcher;
 }
 
 export interface ProjectTaskListResult extends ProjectToolResult {
   tasks?: ProjectTask[];
 }
 
+export interface EditorRecoveryEntry {
+  version: 1;
+  rootPath: string;
+  filePath: string;
+  content: string;
+  updatedAt: string;
+}
+
+export interface EditorRecoveryListResult extends ProjectToolResult {
+  entries: EditorRecoveryEntry[];
+}
+
+export interface EditorRecoveryWriteResult extends ProjectToolResult {
+  entry?: EditorRecoveryEntry;
+}
+
+export interface WslDistribution {
+  name: string;
+  system: boolean;
+}
+
+export interface WslStatusResult extends ProjectToolResult {
+  available: boolean;
+  defaultDistribution?: string;
+  distributions: WslDistribution[];
+}
+
+export type WorkspaceTrustState = "unknown" | "trusted" | "restricted";
+
+export interface WorkspacePermissionDetail {
+  id: "source" | "scripts" | "terminals" | "debugging" | "external" | "extensions";
+  label: string;
+  enabled: boolean;
+  detail: string;
+}
+
+export interface WorkspaceTrustStatus {
+  rootPath: string;
+  state: WorkspaceTrustState;
+  trusted: boolean;
+  decidedAt?: string;
+  permissions?: WorkspacePermissionDetail[];
+}
+
+export interface WorkspaceTrustResult extends ProjectToolResult {
+  status?: WorkspaceTrustStatus;
+}
+
 export type TerminalSessionKind = "shell" | "task" | "file";
 export type TerminalSessionStatus = "running" | "exited";
+export type TerminalProblemMatcher = "auto" | "dart" | "python" | "typescript" | "java" | "gcc";
+
+export interface TerminalProfile {
+  id: string;
+  label: string;
+  description: string;
+  kind: string;
+}
+
+export interface TerminalProfileListResult extends ProjectToolResult {
+  profiles?: TerminalProfile[];
+}
+
+export interface TerminalProblem {
+  id: string;
+  sessionId: string;
+  path: string;
+  line: number;
+  column?: number;
+  severity: "error" | "warning" | "info";
+  message: string;
+}
 
 export interface TerminalSession {
   id: string;
@@ -206,6 +294,8 @@ export interface TerminalSession {
   kind: TerminalSessionKind;
   taskId?: string;
   filePath?: string;
+  profileId?: string;
+  problemMatcher?: TerminalProblemMatcher;
   cwd: string;
   status: TerminalSessionStatus;
   exitCode?: number;
@@ -233,6 +323,104 @@ export type TerminalEvent =
       signal?: number;
     };
 
+export type DebugSessionState =
+  | "starting"
+  | "running"
+  | "stopped"
+  | "terminated";
+
+export interface DebugBreakpoint {
+  id?: number;
+  filePath: string;
+  line: number;
+  verified: boolean;
+  message?: string;
+}
+
+export interface DebugSession {
+  id: string;
+  adapter: "python" | "dart";
+  filePath: string;
+  state: DebugSessionState;
+  startedAt: string;
+}
+
+export interface DebugStackFrame {
+  id: number;
+  name: string;
+  filePath?: string;
+  sourceName?: string;
+  line: number;
+  column: number;
+  threadId: number;
+}
+
+export interface DebugScope {
+  name: string;
+  variablesReference: number;
+  expensive?: boolean;
+  namedVariables?: number;
+  indexedVariables?: number;
+}
+
+export interface DebugVariable {
+  name: string;
+  value: string;
+  type?: string;
+  variablesReference: number;
+  namedVariables?: number;
+  indexedVariables?: number;
+}
+
+export type DebugEvent =
+  | {
+      sessionId: string;
+      type: "started";
+      adapter: string;
+      filePath: string;
+    }
+  | {
+      sessionId: string;
+      type: "stopped";
+      reason: string;
+      description?: string;
+      threadId?: number;
+    }
+  | { sessionId: string; type: "continued"; threadId?: number }
+  | { sessionId: string; type: "terminated"; exitCode?: number }
+  | {
+      sessionId: string;
+      type: "output";
+      category: string;
+      output: string;
+    }
+  | {
+      sessionId: string;
+      type: "breakpoint";
+      breakpoint?: Partial<DebugBreakpoint>;
+    };
+
+export interface DebugSessionResult extends ProjectToolResult {
+  session?: DebugSession;
+}
+
+export interface DebugBreakpointResult extends ProjectToolResult {
+  breakpoints?: DebugBreakpoint[];
+}
+
+export interface DebugStackResult extends ProjectToolResult {
+  frames: DebugStackFrame[];
+  threadId?: number;
+}
+
+export interface DebugScopeResult extends ProjectToolResult {
+  scopes: DebugScope[];
+}
+
+export interface DebugVariableResult extends ProjectToolResult {
+  variables: DebugVariable[];
+}
+
 export interface GitFileStatus {
   path: string;
   originalPath?: string;
@@ -253,6 +441,9 @@ export interface GitRepositoryStatus {
   detached: boolean;
   ahead: number;
   behind: number;
+  upstream?: string;
+  branches: string[];
+  remotes: string[];
   entries: GitFileStatus[];
 }
 
@@ -279,6 +470,15 @@ declare global {
   interface Window {
     divex?: {
       chooseProject: () => Promise<ProjectPayload | null>;
+      chooseWslProject: () => Promise<ProjectPayload | null>;
+      getWslStatus: () => Promise<WslStatusResult>;
+      getWorkspaceTrust: (args: {
+        rootPath: string;
+      }) => Promise<WorkspaceTrustResult>;
+      setWorkspaceTrust: (args: {
+        rootPath: string;
+        trusted: boolean;
+      }) => Promise<WorkspaceTrustResult>;
       onProjectLoadProgress: (
         callback: (progress: ProjectLoadProgress) => void,
       ) => () => void;
@@ -299,6 +499,17 @@ declare global {
         rootPath: string;
         entryPath: string;
         newName: string;
+      }) => Promise<ProjectMutationResult>;
+      createProjectEntry: (args: {
+        rootPath: string;
+        parentPath: string;
+        entryKind: "file" | "folder";
+        name: string;
+      }) => Promise<ProjectMutationResult>;
+      duplicateProjectEntry: (args: {
+        rootPath: string;
+        sourcePath: string;
+        sourceKind: "file" | "folder";
       }) => Promise<ProjectMutationResult>;
       deleteProjectEntry: (args: {
         rootPath: string;
@@ -322,6 +533,14 @@ declare global {
         rootPath: string;
         entryPath?: string;
         entryKind?: "file" | "folder";
+        profileId?: string;
+      }) => Promise<ProjectToolResult>;
+      listTerminalProfiles: (args: {
+        rootPath: string;
+      }) => Promise<TerminalProfileListResult>;
+      openTerminalLink: (args: {
+        rootPath: string;
+        url: string;
       }) => Promise<ProjectToolResult>;
       listProjectTasks: (args: {
         rootPath: string;
@@ -329,6 +548,7 @@ declare global {
       runProjectTask: (args: {
         rootPath: string;
         taskId: string;
+        profileId?: string;
       }) => Promise<ProjectToolResult>;
       runProjectFile: (args: {
         rootPath: string;
@@ -340,6 +560,7 @@ declare global {
         cols?: number;
         rows?: number;
         title?: string;
+        profileId?: string;
       }) => Promise<TerminalSessionResult>;
       runTaskInTerminal: (args: {
         rootPath: string;
@@ -370,6 +591,42 @@ declare global {
       onTerminalEvent: (
         callback: (event: TerminalEvent) => void,
       ) => () => void;
+      startDebugSession: (args: {
+        rootPath: string;
+        filePath: string;
+        breakpoints: Array<{ filePath: string; lines: number[] }>;
+      }) => Promise<DebugSessionResult>;
+      setDebugBreakpoints: (args: {
+        sessionId: string;
+        filePath: string;
+        lines: number[];
+      }) => Promise<DebugBreakpointResult>;
+      getDebugStack: (args: {
+        sessionId: string;
+        threadId?: number;
+      }) => Promise<DebugStackResult>;
+      getDebugScopes: (args: {
+        sessionId: string;
+        frameId: number;
+      }) => Promise<DebugScopeResult>;
+      getDebugVariables: (args: {
+        sessionId: string;
+        variablesReference: number;
+        start?: number;
+        count?: number;
+      }) => Promise<DebugVariableResult>;
+      controlDebugSession: (args: {
+        sessionId: string;
+        action: "continue" | "pause" | "next" | "stepIn" | "stepOut";
+        threadId?: number;
+      }) => Promise<ProjectToolResult>;
+      stopDebugSession: (args: {
+        sessionId: string;
+      }) => Promise<ProjectToolResult>;
+      installPythonDebugAdapter: (args: {
+        rootPath: string;
+      }) => Promise<ProjectToolResult>;
+      onDebugEvent: (callback: (event: DebugEvent) => void) => () => void;
       shareProjectEntry: (args: {
         rootPath: string;
         entryPath: string;
@@ -381,6 +638,7 @@ declare global {
         targetPath: string;
         targetKind: "file" | "folder";
         mode: "cut" | "copy";
+        destinationName?: string;
       }) => Promise<ProjectMutationResult>;
       saveProjectFile: (args: {
         rootPath: string;
@@ -420,6 +678,38 @@ declare global {
       commitGitChanges: (args: {
         rootPath: string;
         message: string;
+      }) => Promise<ProjectToolResult>;
+      listEditorRecoveries: (args: {
+        rootPath: string;
+      }) => Promise<EditorRecoveryListResult>;
+      writeEditorRecovery: (args: {
+        rootPath: string;
+        filePath: string;
+        content: string;
+      }) => Promise<EditorRecoveryWriteResult>;
+      clearEditorRecovery: (args: {
+        rootPath: string;
+        filePath: string;
+      }) => Promise<ProjectToolResult>;
+      initializeGitRepository: (args: {
+        rootPath: string;
+      }) => Promise<ProjectToolResult>;
+      changeGitBranch: (args: {
+        rootPath: string;
+        branch: string;
+        create: boolean;
+      }) => Promise<ProjectToolResult>;
+      syncGitRepository: (args: {
+        rootPath: string;
+        action: "fetch" | "pull" | "push";
+      }) => Promise<ProjectToolResult>;
+      stashGitChanges: (args: {
+        rootPath: string;
+        action: "save" | "pop";
+      }) => Promise<ProjectToolResult>;
+      discardGitChanges: (args: {
+        rootPath: string;
+        filePath?: string;
       }) => Promise<ProjectToolResult>;
       reportRendererError: (
         report: RendererErrorReport,

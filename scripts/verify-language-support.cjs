@@ -104,6 +104,14 @@ try {
         "web/styles/theme.css",
         ":root {\n  --surface: #111;\n}\n",
       ),
+      source(
+        "typescript/models.ts",
+        "export interface User { id: string }\nexport type UserId = string;\n",
+      ),
+      source(
+        "typescript/App.tsx",
+        "import type { User } from './models';\nexport const App: React.FC<{ user: User }> = ({ user }) => <main>{user.id}</main>;\n",
+      ),
     ],
   });
 
@@ -112,11 +120,12 @@ try {
     "python",
     "java",
     "javascript",
+    "typescript",
     "html",
     "css",
   ]));
-  assert.equal(project.languageSummary, "6-language");
-  assert.equal(project.relationshipCount, 7);
+  assert.equal(project.languageSummary, "7-language");
+  assert.equal(project.relationshipCount, 8);
 
   const byPath = new Map(project.files.map((file) => [file.path, file]));
   assert.deepEqual(byPath.get("lib/main.dart").resolvedImports, [
@@ -160,6 +169,16 @@ try {
   ]);
   assert.ok(
     names(byPath.get("web/styles/base.css")).includes("selector:#app"),
+  );
+
+  assert.deepEqual(byPath.get("typescript/App.tsx").resolvedImports, [
+    "typescript/models.ts",
+  ]);
+  assert.ok(
+    names(byPath.get("typescript/models.ts")).includes("interface:User"),
+  );
+  assert.ok(
+    names(byPath.get("typescript/App.tsx")).includes("function:App"),
   );
 
   process.stdout.write(

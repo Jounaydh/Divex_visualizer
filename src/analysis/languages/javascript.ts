@@ -9,7 +9,12 @@ import {
   type LanguageAdapter,
 } from "./shared";
 
-const JAVASCRIPT_RESOLUTION_EXTENSIONS = [
+export const JAVASCRIPT_RESOLUTION_EXTENSIONS = [
+  "ts",
+  "tsx",
+  "mts",
+  "cts",
+  "d.ts",
   "js",
   "jsx",
   "mjs",
@@ -19,7 +24,7 @@ const JAVASCRIPT_RESOLUTION_EXTENSIONS = [
   "html",
 ];
 
-function extractJavaScriptImports(content: string) {
+export function extractJavaScriptImports(content: string) {
   const imports: string[] = [];
   const withoutBlockComments = stripCommentsPreservingLines(
     content,
@@ -38,7 +43,11 @@ function extractJavaScriptImports(content: string) {
   return unique(imports);
 }
 
-function extractJavaScriptSymbols(path: string, content: string) {
+export function extractJavaScriptSymbols(
+  path: string,
+  content: string,
+  language = "JavaScript",
+) {
   const symbols: CodeSymbol[] = [];
   const activeClassIndents: number[] = [];
   const contentWithoutBlockComments = stripCommentsPreservingLines(
@@ -60,7 +69,7 @@ function extractJavaScriptSymbols(path: string, content: string) {
     }
 
     const classMatch = trimmed.match(
-      /^(?:(?:export\s+)?(?:default\s+)?)?class\s+([A-Za-z_$][\w$]*)/,
+      /^(?:(?:export|default|abstract|declare)\s+)*class\s+([A-Za-z_$][\w$]*)/,
     );
     if (classMatch) {
       symbols.push(
@@ -70,7 +79,7 @@ function extractJavaScriptSymbols(path: string, content: string) {
           "class",
           trimmed.replace(/\s*\{.*$/, ""),
           index + 1,
-          "JavaScript",
+          language,
         ),
       );
       activeClassIndents.push(indent);
@@ -78,7 +87,7 @@ function extractJavaScriptSymbols(path: string, content: string) {
     }
 
     const functionMatch = trimmed.match(
-      /^(?:(?:export\s+)?(?:default\s+)?)?(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)\s*\(/,
+      /^(?:(?:export|default|declare)\s+)*(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)(?:\s*<[^>{}]+>)?\s*\(/,
     );
     if (functionMatch) {
       symbols.push(
@@ -88,14 +97,14 @@ function extractJavaScriptSymbols(path: string, content: string) {
           "function",
           trimmed.replace(/\s*\{.*$/, ""),
           index + 1,
-          "JavaScript",
+          language,
         ),
       );
       return;
     }
 
     const variableMatch = trimmed.match(
-      /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.*)$/,
+      /^(?:(?:export|declare)\s+)*(?:const|let|var)\s+([A-Za-z_$][\w$]*)(?:\s*:\s*.*?)?\s*=(?!>)\s*(.*)$/,
     );
     if (variableMatch) {
       const functionValue =
@@ -109,7 +118,7 @@ function extractJavaScriptSymbols(path: string, content: string) {
           functionValue ? "function" : "variable",
           trimmed.replace(/\s*\{.*$/, ""),
           index + 1,
-          "JavaScript",
+          language,
         ),
       );
       return;
@@ -117,7 +126,7 @@ function extractJavaScriptSymbols(path: string, content: string) {
 
     if (activeClassIndents.length > 0) {
       const methodMatch = trimmed.match(
-        /^(?:(?:static|async|get|set)\s+)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/,
+        /^(?:(?:public|private|protected|static|abstract|override|async|get|set|readonly)\s+)*([A-Za-z_$][\w$]*)(?:\s*<[^>{}]+>)?\s*\([^)]*\)\s*(?::\s*[^={;]+)?\s*\{/,
       );
       if (
         methodMatch &&
@@ -127,10 +136,10 @@ function extractJavaScriptSymbols(path: string, content: string) {
           createSymbol(
             path,
             methodMatch[1],
-            "method",
+            methodMatch[1] === "constructor" ? "constructor" : "method",
             trimmed.replace(/\s*\{.*$/, ""),
             index + 1,
-            "JavaScript",
+            language,
           ),
         );
       }

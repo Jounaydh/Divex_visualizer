@@ -20,6 +20,13 @@ import {
 import { VisualizerWorkspace } from "./app/VisualizerWorkspace";
 import { WorkspaceResizer } from "./app/WorkspaceResizer";
 import type { ExplorerEntry } from "./features/explorer/FileExplorer";
+import { isValidExplorerName } from "./features/explorer/explorerNames";
+import { canDebugFile, useDebugger } from "./features/debugger/useDebugger";
+import {
+  WorkspaceTrustBanner,
+  WorkspaceTrustDialog,
+} from "./features/workspace-trust/WorkspaceTrustUI";
+import { useWorkspaceTrust } from "./features/workspace-trust/useWorkspaceTrust";
 import { InspectorPanel } from "./features/inspector/InspectorPanel";
 import {
   NavigationPalette,
@@ -32,6 +39,13 @@ import {
 } from "./features/navigation/navigationIndex";
 import { useNavigationHistory } from "./features/navigation/useNavigationHistory";
 import { useIntegratedTerminal } from "./features/terminal/useIntegratedTerminal";
+import { ProjectSettingsDialog } from "./features/project-settings/ProjectSettingsDialog";
+import {
+  loadProjectSettings,
+  saveProjectSettings,
+  type ProjectSettings,
+} from "./features/project-settings/projectSettings";
+import { useProjectLiveRefresh } from "./features/project-settings/useProjectLiveRefresh";
 import { DEFAULT_TWO_D_ZOOM } from "./config/ui";
 import { sampleProject } from "./data/sampleProject";
 import type {
@@ -41,8 +55,10 @@ import type {
   ProjectLoadProgress,
   ProjectPayload,
   ProjectTask,
+  TerminalProblem,
   ViewMode,
   VisualNode,
+  WslStatusResult,
   WorkflowDirection,
   WorkflowPosition,
 } from "./types";
@@ -126,6 +142,11 @@ export default function App({ safeMode = false }: AppProps) {
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false);
+  const [workspaceTrustOpen, setWorkspaceTrustOpen] = useState(false);
+  const [projectSettings, setProjectSettings] = useState(() =>
+    loadProjectSettings(sampleProject.rootPath),
+  );
   const [sidebarView, setSidebarView] = useState<SidebarView>("explorer");
   const [gitRefreshKey, setGitRefreshKey] = useState(0);
   const [openingProject, setOpeningProject] = useState(false);
@@ -140,7 +161,11 @@ export default function App({ safeMode = false }: AppProps) {
   const [explorerClipboard, setExplorerClipboard] =
     useState<ExplorerClipboard | null>(null);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const [projectTaskError, setProjectTaskError] = useState<string | null>(null);
+  const [pendingTaskConfigurationOpen, setPendingTaskConfigurationOpen] = useState(false);
+  const [wslStatus, setWslStatus] = useState<WslStatusResult | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const recoveryCheckedRootRef = useRef("");
   const [workspaceWidth, setWorkspaceWidth] = useState(
     () => window.innerWidth,
   );
@@ -150,10 +175,37 @@ export default function App({ safeMode = false }: AppProps) {
   const navigationHistory = useNavigationHistory<NavigationSnapshot>(
     navigationSnapshotKey,
   );
+  const workspaceTrust = useWorkspaceTrust(
+    payload.rootPath,
+    projectIsLocal && Boolean(window.divex),
+  );
 
   useEffect(() => {
     if (!window.divex) return;
     return window.divex.onProjectLoadProgress(setProjectLoadProgress);
+  }, []);
+
+  useEffect(() => {
+    if (window.divex?.platform !== "win32") return;
+    let cancelled = false;
+    void window.divex
+      .getWslStatus()
+      .then((status) => {
+        if (!cancelled) setWslStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWslStatus({
+            success: false,
+            output: "WSL status could not be read.",
+            available: false,
+            distributions: [],
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -163,12 +215,24 @@ export default function App({ safeMode = false }: AppProps) {
   }, [analysisError]);
 
   useEffect(() => {
+    if (workspaceTrust.needsDecision) setWorkspaceTrustOpen(true);
+  }, [workspaceTrust.needsDecision]);
+
+  useEffect(() => {
     if (!isAnalyzing) setProjectLoadProgress(null);
   }, [isAnalyzing]);
 
   useEffect(() => {
     setGitRefreshKey((current) => current + 1);
   }, [payload.files, payload.rootPath]);
+
+  useEffect(() => {
+    const settings = loadProjectSettings(payload.rootPath);
+    setProjectSettings(settings);
+    setViewMode(settings.defaultView);
+    setWorkflowDirection(settings.workflowDirection);
+    setFreePositioning(settings.freePositioning);
+  }, [payload.rootPath]);
 
   useEffect(() => {
     const workspace = workspaceRef.current;
@@ -208,23 +272,35 @@ export default function App({ safeMode = false }: AppProps) {
   }, [workspaceWidth]);
 
   useEffect(() => {
-    if (!projectIsLocal || !window.divex) {
+    if (!projectIsLocal || !window.divex || !workspaceTrust.trusted) {
       setProjectTasks([]);
+      setProjectTaskError(null);
       return;
     }
     let cancelled = false;
     void window.divex
       .listProjectTasks({ rootPath: payload.rootPath })
       .then((result) => {
-        if (!cancelled) setProjectTasks(result.tasks ?? []);
+        if (!cancelled) {
+          setProjectTasks(result.tasks ?? []);
+          setProjectTaskError(result.success ? null : result.output);
+        }
       })
       .catch(() => {
-        if (!cancelled) setProjectTasks([]);
+        if (!cancelled) {
+          setProjectTasks([]);
+          setProjectTaskError("Project tasks could not be loaded.");
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [payload.files, payload.rootPath, projectIsLocal]);
+  }, [
+    payload.files,
+    payload.rootPath,
+    projectIsLocal,
+    workspaceTrust.trusted,
+  ]);
 
   const explorerMaxWidth = Math.max(
     MIN_EXPLORER_WIDTH,
@@ -253,14 +329,25 @@ export default function App({ safeMode = false }: AppProps) {
       project.files.find((file) => file.path === selectedNode.path) ?? null
     );
   }, [project.files, selectedNode]);
+  const debuggerManager = useDebugger(
+    payload.rootPath,
+    projectIsLocal && workspaceTrust.trusted && Boolean(window.divex),
+  );
 
   const showTransientNotice = (message: string, duration = 3500) => {
     setNotice(message);
     window.setTimeout(() => setNotice(null), duration);
   };
+  useProjectLiveRefresh({
+    rootPath: payload.rootPath,
+    enabled: projectIsLocal && projectSettings.liveRefresh,
+    onProject: setPayload,
+    onNotice: showTransientNotice,
+  });
   const terminal = useIntegratedTerminal({
     rootPath: payload.rootPath,
-    enabled: projectIsLocal && Boolean(window.divex),
+    enabled:
+      projectIsLocal && workspaceTrust.trusted && Boolean(window.divex),
     onNotice: showTransientNotice,
   });
 
@@ -272,6 +359,7 @@ export default function App({ safeMode = false }: AppProps) {
       .map((file) => file.path.split("/"))
       .find((parts) => parts.length > 1)?.[0];
 
+    recoveryCheckedRootRef.current = "";
     setPayload(nextProject);
     setExpandedFolders(
       new Set(firstTopLevelFolder ? [`folder:${firstTopLevelFolder}`] : []),
@@ -408,6 +496,25 @@ export default function App({ safeMode = false }: AppProps) {
     [project.files, showTransientNotice, viewMode, visitNavigationSnapshot],
   );
 
+  useEffect(() => {
+    if (!pendingTaskConfigurationOpen) return;
+    const configuration = project.files.find((file) => file.path === "divex.tasks.json");
+    if (!configuration) return;
+    setPendingTaskConfigurationOpen(false);
+    openNavigationTarget({ kind: "file", path: configuration.path, line: 1 });
+  }, [openNavigationTarget, pendingTaskConfigurationOpen, project.files]);
+
+  useEffect(() => {
+    const frame = debuggerManager.activeFrame;
+    if (!frame?.filePath) return;
+    setSidebarView("debugger");
+    openNavigationTarget({
+      kind: "file",
+      path: frame.filePath,
+      line: frame.line,
+    });
+  }, [debuggerManager.activeFrame, openNavigationTarget]);
+
   const persistFileContent = (path: string, content: string) => {
     setPayload((current) => ({
       ...current,
@@ -417,26 +524,22 @@ export default function App({ safeMode = false }: AppProps) {
     }));
   };
 
-  const openProject = async () => {
+  const openProjectFrom = async (
+    chooseProject: () => Promise<ProjectPayload | null>,
+    preparationMessage: string,
+  ) => {
     setFileMenuOpen(false);
     setTerminalMenuOpen(false);
     setProjectMenuOpen(false);
-    if (!window.divex) {
-      showTransientNotice(
-        "Folder selection is available in the Divex desktop window.",
-      );
-      return;
-    }
-
     setOpeningProject(true);
     setProjectLoadProgress({
       phase: "scanning",
       completed: 0,
       total: 0,
-      message: "Preparing project scan…",
+      message: preparationMessage,
     });
     try {
-      const nextProject = await window.divex.chooseProject();
+      const nextProject = await chooseProject();
       if (nextProject) {
         resetWorkspace(nextProject, true);
         if (nextProject.loadSummary) {
@@ -461,10 +564,50 @@ export default function App({ safeMode = false }: AppProps) {
     }
   };
 
+  const applyProjectSettings = (settings: ProjectSettings) => {
+    const saved = saveProjectSettings(payload.rootPath, settings);
+    setProjectSettings(saved);
+    setViewMode(saved.defaultView);
+    setWorkflowDirection(saved.workflowDirection);
+    setFreePositioning(saved.freePositioning);
+    setTwoDPositions({});
+    setLogicPositions({});
+    setProjectSettingsOpen(false);
+    showTransientNotice("Project settings saved.");
+  };
+
+  const openProject = async () => {
+    if (!window.divex) {
+      showTransientNotice(
+        "Folder selection is available in the Divex desktop window.",
+      );
+      return;
+    }
+    await openProjectFrom(
+      () => window.divex!.chooseProject(),
+      "Preparing project scan…",
+    );
+  };
+
+  const openWslProject = async () => {
+    if (!window.divex || window.divex.platform !== "win32") {
+      showTransientNotice("WSL project support is available on Windows.");
+      return;
+    }
+    if (wslStatus && !wslStatus.available) {
+      showTransientNotice(wslStatus.output, 5000);
+      return;
+    }
+    await openProjectFrom(
+      () => window.divex!.chooseWslProject(),
+      "Connecting to WSL and preparing the project scan…",
+    );
+  };
+
   const openMiniWindow = async () => {
     if (!projectIsLocal || !window.divex) {
       showTransientNotice(
-        "Open a local project before launching Divex Mini.",
+        "Open a project before launching Divex Mini.",
       );
       return;
     }
@@ -474,18 +617,99 @@ export default function App({ safeMode = false }: AppProps) {
     showTransientNotice(result.output);
   };
 
+  const createExplorerEntry = async (
+    parentPath: string,
+    entryKind: "file" | "folder",
+    requestedName: string,
+  ) => {
+    const name = requestedName.trim();
+    if (!isValidExplorerName(name)) {
+      showTransientNotice("Enter a name that is valid on Windows.");
+      return;
+    }
+
+    if (projectIsLocal && window.divex) {
+      const create = async (nextName: string): Promise<void> => {
+        const result = await window.divex!.createProjectEntry({
+          rootPath: payload.rootPath,
+          parentPath,
+          entryKind,
+          name: nextName,
+        });
+        if (result.conflict) {
+          const alternative = window.prompt(
+            `${result.output}\nEnter a different name:`,
+            result.suggestedName ?? nextName,
+          );
+          if (alternative?.trim() && isValidExplorerName(alternative.trim())) {
+            await create(alternative.trim());
+          }
+          return;
+        }
+        if (result.success && result.project) {
+          resetWorkspace(result.project, true);
+        }
+        showTransientNotice(result.output, result.success ? 3500 : 4500);
+      };
+      await create(name);
+      return;
+    }
+
+    const entryPath = parentPath ? `${parentPath}/${name}` : name;
+    const exists =
+      payload.files.some(
+        (file) =>
+          file.path === entryPath || file.path.startsWith(`${entryPath}/`),
+      ) || (payload.folders ?? []).includes(entryPath);
+    if (exists) {
+      showTransientNotice(`“${name}” already exists in this folder.`);
+      return;
+    }
+    resetWorkspace({
+      ...payload,
+      files:
+        entryKind === "file"
+          ? [...payload.files, { path: entryPath, content: "" }]
+          : payload.files,
+      folders:
+        entryKind === "folder"
+          ? [...new Set([...(payload.folders ?? []), entryPath])]
+          : payload.folders,
+    });
+    showTransientNotice(`Created ${entryKind} ${name} in this demo session.`);
+  };
+
+  const duplicateExplorerEntry = async (entry: ExplorerEntry) => {
+    if (projectIsLocal && window.divex) {
+      const result = await window.divex.duplicateProjectEntry({
+        rootPath: payload.rootPath,
+        sourcePath: entry.path,
+        sourceKind: entry.kind,
+      });
+      if (result.success && result.project) {
+        resetWorkspace(result.project, true);
+      }
+      showTransientNotice(result.output, result.success ? 3500 : 4500);
+      return;
+    }
+
+    const parentPath = entry.path.split("/").slice(0, -1).join("/");
+    await pasteExplorerEntry(
+      {
+        kind: "folder",
+        name: parentPath.split("/").at(-1) ?? payload.name,
+        path: parentPath,
+      },
+      { entry, mode: "copy" },
+    );
+  };
+
   const renameExplorerEntry = async (
     entry: ExplorerEntry,
     newName: string,
   ) => {
-    if (
-      !newName ||
-      newName === "." ||
-      newName === ".." ||
-      newName.includes("/") ||
-      newName.includes("\\")
-    ) {
-      showTransientNotice("Enter a name without folder separators.");
+    if (!isValidExplorerName(newName)) {
+      showTransientNotice("Enter a name that is valid on Windows.");
       return;
     }
 
@@ -507,15 +731,19 @@ export default function App({ safeMode = false }: AppProps) {
     const nextPath = parts.join("/");
     const prefix = `${entry.path}/`;
     const nextPrefix = `${nextPath}/`;
-    const collides = payload.files.some((file) => {
-      const belongsToEntry =
-        file.path === entry.path || file.path.startsWith(prefix);
-      if (belongsToEntry) return false;
-      return (
-        file.path === nextPath ||
-        file.path.startsWith(nextPrefix)
-      );
-    });
+    const collides =
+      payload.files.some((file) => {
+        const belongsToEntry =
+          file.path === entry.path || file.path.startsWith(prefix);
+        if (belongsToEntry) return false;
+        return file.path === nextPath || file.path.startsWith(nextPrefix);
+      }) ||
+      (payload.folders ?? []).some((folder) => {
+        const belongsToEntry =
+          folder === entry.path || folder.startsWith(prefix);
+        if (belongsToEntry) return false;
+        return folder === nextPath || folder.startsWith(nextPrefix);
+      });
     if (collides) {
       showTransientNotice(`“${newName}” already exists in this folder.`);
       return;
@@ -533,6 +761,14 @@ export default function App({ safeMode = false }: AppProps) {
           };
         }
         return file;
+      }),
+      folders: (payload.folders ?? []).map((folder) => {
+        if (entry.kind !== "folder") return folder;
+        if (folder === entry.path) return nextPath;
+        if (folder.startsWith(prefix)) {
+          return `${nextPrefix}${folder.slice(prefix.length)}`;
+        }
+        return folder;
       }),
     };
     resetWorkspace(nextProject);
@@ -565,6 +801,11 @@ export default function App({ safeMode = false }: AppProps) {
         entry.kind === "file"
           ? file.path !== entry.path
           : !file.path.startsWith(prefix),
+      ),
+      folders: (payload.folders ?? []).filter((folder) =>
+        entry.kind === "folder"
+          ? folder !== entry.path && !folder.startsWith(prefix)
+          : true,
       ),
     };
     resetWorkspace(nextProject);
@@ -625,7 +866,7 @@ export default function App({ safeMode = false }: AppProps) {
 
   const openExplorerEntry = async (entry: ExplorerEntry) => {
     if (!projectIsLocal || !window.divex) {
-      showTransientNotice("Open a local project to use an external app.");
+      showTransientNotice("Open a project to use an external app.");
       return;
     }
     const result = await window.divex.openProjectEntry({
@@ -636,6 +877,11 @@ export default function App({ safeMode = false }: AppProps) {
   };
 
   const openExplorerTerminal = async (entry: ExplorerEntry) => {
+    if (!workspaceTrust.trusted) {
+      setWorkspaceTrustOpen(true);
+      showTransientNotice("Trust this workspace before opening a terminal.");
+      return;
+    }
     const directory =
       entry.kind === "folder"
         ? entry.path
@@ -662,24 +908,46 @@ export default function App({ safeMode = false }: AppProps) {
     );
   };
 
-  const pasteExplorerEntry = async (target: ExplorerEntry) => {
-    if (!explorerClipboard) return;
-    const { entry: source, mode } = explorerClipboard;
+  const pasteExplorerEntry = async (
+    target: ExplorerEntry,
+    transferState: ExplorerClipboard | null = explorerClipboard,
+  ) => {
+    if (!transferState) return;
+    const { entry: source, mode } = transferState;
 
     if (projectIsLocal && window.divex) {
-      const result = await window.divex.pasteProjectEntry({
-        rootPath: payload.rootPath,
-        sourcePath: source.path,
-        sourceKind: source.kind,
-        targetPath: target.path,
-        targetKind: target.kind,
-        mode,
-      });
-      if (result.success && result.project) {
-        resetWorkspace(result.project, true);
-        if (mode === "cut") setExplorerClipboard(null);
-      }
-      showTransientNotice(result.output, result.success ? 3500 : 4500);
+      const transfer = async (destinationName?: string): Promise<void> => {
+        const result = await window.divex!.pasteProjectEntry({
+          rootPath: payload.rootPath,
+          sourcePath: source.path,
+          sourceKind: source.kind,
+          targetPath: target.path,
+          targetKind: target.kind,
+          mode,
+          destinationName,
+        });
+        if (result.conflict) {
+          const alternative = window.prompt(
+            `${result.output}\nMove it with a different name:`,
+            result.suggestedName ?? source.name,
+          );
+          if (alternative?.trim() && isValidExplorerName(alternative.trim())) {
+            await transfer(alternative.trim());
+          }
+          return;
+        }
+        if (result.success && result.project) {
+          resetWorkspace(result.project, true);
+          if (
+            mode === "cut" &&
+            explorerClipboard?.entry.path === source.path
+          ) {
+            setExplorerClipboard(null);
+          }
+        }
+        showTransientNotice(result.output, result.success ? 3500 : 4500);
+      };
+      await transfer();
       return;
     }
 
@@ -704,6 +972,10 @@ export default function App({ safeMode = false }: AppProps) {
         (file) =>
           file.path === candidate ||
           file.path.startsWith(`${candidate}/`),
+      ) ||
+      (payload.folders ?? []).some(
+        (folder) =>
+          folder === candidate || folder.startsWith(`${candidate}/`),
       );
     const extensionIndex =
       source.kind === "file" ? source.name.lastIndexOf(".") : -1;
@@ -738,7 +1010,11 @@ export default function App({ safeMode = false }: AppProps) {
         ? file.path === source.path
         : file.path.startsWith(sourcePrefix),
     );
-    if (sourceFiles.length === 0) {
+    const sourceFolders = (payload.folders ?? []).filter(
+      (folder) =>
+        folder === source.path || folder.startsWith(sourcePrefix),
+    );
+    if (sourceFiles.length === 0 && sourceFolders.length === 0) {
       showTransientNotice("The copied item is no longer available.");
       return;
     }
@@ -757,6 +1033,23 @@ export default function App({ safeMode = false }: AppProps) {
           : payload.files.map((file) =>
               sourceFiles.includes(file) ? moveFile(file) : file,
             ),
+      folders:
+        mode === "copy"
+          ? [
+              ...(payload.folders ?? []),
+              ...sourceFolders.map((folder) =>
+                folder === source.path
+                  ? destinationPath
+                  : `${destinationPath}/${folder.slice(sourcePrefix.length)}`,
+              ),
+            ]
+          : (payload.folders ?? []).map((folder) =>
+              sourceFolders.includes(folder)
+                ? folder === source.path
+                  ? destinationPath
+                  : `${destinationPath}/${folder.slice(sourcePrefix.length)}`
+                : folder,
+            ),
     };
     resetWorkspace(nextProject);
     if (mode === "cut") setExplorerClipboard(null);
@@ -765,19 +1058,125 @@ export default function App({ safeMode = false }: AppProps) {
     );
   };
 
-  const openExternalTerminal = async () => {
+  const moveExplorerEntry = async (
+    source: ExplorerEntry,
+    target: ExplorerEntry,
+  ) => {
+    await pasteExplorerEntry(target, { entry: source, mode: "cut" });
+  };
+
+  const openExternalTerminal = async (profileId?: string) => {
     if (!projectIsLocal || !window.divex) {
-      showTransientNotice("Open a local project to launch a terminal.");
+      showTransientNotice("Open a project to launch a terminal.");
+      return;
+    }
+    if (!workspaceTrust.trusted) {
+      setWorkspaceTrustOpen(true);
+      showTransientNotice("Trust this workspace before opening a terminal.");
       return;
     }
     const result = await window.divex.openProjectTerminal({
       rootPath: payload.rootPath,
+      profileId: profileId ?? terminal.selectedProfileId ?? undefined,
     });
     if (!result.success) showTransientNotice(result.output, 4500);
   };
 
+  const configureProjectTasks = async () => {
+    if (!projectIsLocal || !window.divex) return;
+    if (!workspaceTrust.trusted) {
+      setWorkspaceTrustOpen(true);
+      showTransientNotice("Trust this workspace before configuring executable tasks.");
+      return;
+    }
+    const existing = project.files.find((file) => file.path === "divex.tasks.json");
+    if (existing) {
+      openNavigationTarget({ kind: "file", path: existing.path, line: 1 });
+      return;
+    }
+    const template = `${JSON.stringify({
+      version: 1,
+      tasks: [],
+      _help: "Add tasks with id, label, group, command, args, optional cwd, and problemMatcher.",
+      _example: {
+        id: "build",
+        label: "Build project",
+        group: "build",
+        command: "npm",
+        args: ["run", "build"],
+        cwd: "",
+        problemMatcher: "typescript",
+      },
+    }, null, 2)}\n`;
+    const created = await window.divex.createProjectEntry({
+      rootPath: payload.rootPath,
+      parentPath: "",
+      entryKind: "file",
+      name: "divex.tasks.json",
+    });
+    if (!created.success || !created.project || !created.entryPath) {
+      showTransientNotice(created.output, 4500);
+      return;
+    }
+    const saved = await window.divex.saveProjectFile({
+      rootPath: payload.rootPath,
+      filePath: created.entryPath,
+      content: template,
+    });
+    if (!saved.success) {
+      showTransientNotice(saved.output, 4500);
+      return;
+    }
+    const nextPayload = {
+      ...created.project,
+      files: created.project.files.map((file) =>
+        file.path === created.entryPath ? { ...file, content: template } : file,
+      ),
+    };
+    setPendingTaskConfigurationOpen(true);
+    resetWorkspace(nextPayload, true);
+    showTransientNotice("Created divex.tasks.json. Add tasks, then save the file.");
+  };
+
+  const openTerminalProblem = (problem: TerminalProblem) => {
+    const normalized = problem.path.replaceAll("\\", "/").replace(/^\.\//, "");
+    const file = project.files.find(
+      (candidate) =>
+        candidate.path === normalized || normalized.endsWith(`/${candidate.path}`),
+    );
+    if (!file) {
+      showTransientNotice(`Could not match ${problem.path} to a project file.`, 4500);
+      return;
+    }
+    openNavigationTarget({ kind: "file", path: file.path, line: problem.line });
+  };
+
+  const openTerminalLink = async (url: string) => {
+    if (!window.divex || !workspaceTrust.trusted) return;
+    const result = await window.divex.openTerminalLink({ rootPath: payload.rootPath, url });
+    if (!result.success) showTransientNotice(result.output, 4500);
+  };
+
   const runProjectTask = async (taskId: string) => {
+    if (!workspaceTrust.trusted) {
+      setWorkspaceTrustOpen(true);
+      showTransientNotice("Trust this workspace before running tasks.");
+      return;
+    }
     await terminal.runTask(taskId);
+  };
+
+  const runProjectTaskExternally = async (taskId: string, profileId?: string) => {
+    if (!window.divex || !workspaceTrust.trusted) {
+      setWorkspaceTrustOpen(true);
+      return;
+    }
+    const result = await window.divex.runProjectTask({
+      rootPath: payload.rootPath,
+      taskId,
+      profileId,
+    });
+    showTransientNotice(result.output, result.success ? 3500 : 4500);
   };
 
   const runBuildTask = () => {
@@ -787,6 +1186,11 @@ export default function App({ safeMode = false }: AppProps) {
 
   const runActiveFile = async () => {
     if (!selectedFile) return;
+    if (!workspaceTrust.trusted) {
+      setWorkspaceTrustOpen(true);
+      showTransientNotice("Trust this workspace before running project files.");
+      return;
+    }
     await terminal.runFile(selectedFile.path);
   };
 
@@ -863,6 +1267,39 @@ export default function App({ safeMode = false }: AppProps) {
     project,
     selectedNode?.id ?? null,
   );
+
+  useEffect(() => {
+    if (!window.divex || !projectIsLocal) return;
+    if (recoveryCheckedRootRef.current === payload.rootPath) return;
+    recoveryCheckedRootRef.current = payload.rootPath;
+    let cancelled = false;
+    void window.divex
+      .listEditorRecoveries({ rootPath: payload.rootPath })
+      .then((result) => {
+        if (cancelled || !result.success) return;
+        const recoverable = result.entries.find((entry) => {
+          const diskFile = payload.files.find(
+            (candidate) => candidate.path === entry.filePath,
+          );
+          return diskFile && diskFile.content !== entry.content;
+        });
+        if (recoverable) {
+          openNavigationTarget({
+            kind: "file",
+            path: recoverable.filePath,
+            line: 1,
+          });
+          showTransientNotice(
+            "Recovery-protected editor changes were found from the previous session.",
+            5000,
+          );
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [openNavigationTarget, payload.files, payload.rootPath, projectIsLocal]);
   const isMac = window.divex?.platform === "darwin";
   const navigationCommands: NavigationCommand[] = [
     {
@@ -959,7 +1396,7 @@ export default function App({ safeMode = false }: AppProps) {
       title: terminal.open ? "Hide Integrated Terminal" : "Show Integrated Terminal",
       description: "Toggle the docked project terminal",
       shortcut: "Ctrl+`",
-      disabled: !projectIsLocal,
+      disabled: !projectIsLocal || !workspaceTrust.trusted,
       keywords: "terminal shell console panel",
       run: () =>
         terminal.open ? terminal.setOpen(false) : terminal.show(),
@@ -968,9 +1405,21 @@ export default function App({ safeMode = false }: AppProps) {
       id: "terminal.new",
       title: "New Integrated Terminal",
       description: "Start another interactive shell in this project",
-      disabled: !projectIsLocal,
+      disabled: !projectIsLocal || !workspaceTrust.trusted,
       keywords: "terminal shell session",
       run: () => void terminal.createShell(),
+    },
+    {
+      id: "workspace.trust",
+      title: workspaceTrust.trusted
+        ? "Manage Workspace Trust"
+        : "Trust This Workspace…",
+      description: workspaceTrust.trusted
+        ? "Review or revoke execution permission for this folder"
+        : "Enable tasks, terminals, scripts, and debugging for this folder",
+      disabled: !projectIsLocal,
+      keywords: "workspace trust restricted security safe",
+      run: () => setWorkspaceTrustOpen(true),
     },
     {
       id: "terminal.terminate",
@@ -1014,7 +1463,8 @@ export default function App({ safeMode = false }: AppProps) {
       const commandKey = event.metaKey || event.ctrlKey;
       if (event.ctrlKey && event.key === "`") {
         event.preventDefault();
-        if (terminal.open) terminal.setOpen(false);
+        if (!workspaceTrust.trusted) setWorkspaceTrustOpen(true);
+        else if (terminal.open) terminal.setOpen(false);
         else terminal.show();
       } else if (
         commandKey &&
@@ -1022,7 +1472,8 @@ export default function App({ safeMode = false }: AppProps) {
         event.key.toLowerCase() === "b"
       ) {
         event.preventDefault();
-        runBuildTask();
+        if (!workspaceTrust.trusted) setWorkspaceTrustOpen(true);
+        else runBuildTask();
       } else if (commandKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
         openNavigation(event.shiftKey ? "commands" : "files");
@@ -1047,6 +1498,37 @@ export default function App({ safeMode = false }: AppProps) {
       ) {
         event.preventDefault();
         setSidebarView("source-control");
+      } else if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "d"
+      ) {
+        event.preventDefault();
+        setSidebarView("debugger");
+      } else if (event.key === "F5" && event.shiftKey) {
+        event.preventDefault();
+        void debuggerManager.stop();
+      } else if (event.key === "F5") {
+        event.preventDefault();
+        if (!workspaceTrust.trusted) {
+          setWorkspaceTrustOpen(true);
+          return;
+        }
+        setSidebarView("debugger");
+        if (debuggerManager.session?.state === "stopped") {
+          void debuggerManager.control("continue");
+        } else if (!debuggerManager.session && selectedFile && canDebugFile(selectedFile.extension)) {
+          void debuggerManager.start(selectedFile.path);
+        }
+      } else if (event.key === "F6") {
+        event.preventDefault();
+        void debuggerManager.control("pause");
+      } else if (event.key === "F10") {
+        event.preventDefault();
+        void debuggerManager.control("next");
+      } else if (event.key === "F11") {
+        event.preventDefault();
+        void debuggerManager.control(event.shiftKey ? "stepOut" : "stepIn");
       } else if (event.altKey && event.key === "ArrowLeft") {
         event.preventDefault();
         goBack();
@@ -1058,15 +1540,33 @@ export default function App({ safeMode = false }: AppProps) {
     window.addEventListener("keydown", handleNavigationShortcut);
     return () =>
       window.removeEventListener("keydown", handleNavigationShortcut);
-  }, [goBack, goForward, openNavigation, terminal]);
+  }, [
+    debuggerManager,
+    goBack,
+    goForward,
+    openNavigation,
+    selectedFile,
+    terminal,
+    workspaceTrust.trusted,
+  ]);
 
   return (
     <main className="app-shell">
       <AppHeader
         fileMenuOpen={fileMenuOpen}
         terminalMenuOpen={terminalMenuOpen}
-        terminalEnabled={projectIsLocal && Boolean(window.divex)}
+        terminalEnabled={
+          projectIsLocal && workspaceTrust.trusted && Boolean(window.divex)
+        }
         miniEnabled={projectIsLocal && Boolean(window.divex)}
+        wslEnabled={Boolean(wslStatus?.available)}
+        wslLabel={
+          wslStatus?.available
+            ? wslStatus.defaultDistribution ?? "WSL"
+            : wslStatus
+              ? "Unavailable"
+              : "Checking WSL…"
+        }
         tasks={projectTasks}
         hasTerminalSessions={terminal.sessions.length > 0}
         hasActiveTerminal={Boolean(terminal.activeSession)}
@@ -1075,6 +1575,7 @@ export default function App({ safeMode = false }: AppProps) {
         canGoForward={navigationHistory.canGoForward}
         canRunActiveFile={
           projectIsLocal &&
+          workspaceTrust.trusted &&
           Boolean(
             selectedFile &&
               (selectedFile.extension === "dart" ||
@@ -1083,7 +1584,10 @@ export default function App({ safeMode = false }: AppProps) {
                 selectedFile.extension === "java" ||
                 selectedFile.extension === "js" ||
                 selectedFile.extension === "mjs" ||
-                selectedFile.extension === "cjs"),
+                selectedFile.extension === "cjs" ||
+                selectedFile.extension === "ts" ||
+                selectedFile.extension === "mts" ||
+                selectedFile.extension === "cts"),
           )
         }
         onToggleFileMenu={() => {
@@ -1099,6 +1603,7 @@ export default function App({ safeMode = false }: AppProps) {
           setTerminalMenuOpen(false);
         }}
         onOpenProject={openProject}
+        onOpenWslProject={() => void openWslProject()}
         onOpenMini={() => void openMiniWindow()}
         onNewTerminal={() => void terminal.createShell()}
         onOpenExternalTerminal={() => void openExternalTerminal()}
@@ -1117,6 +1622,14 @@ export default function App({ safeMode = false }: AppProps) {
         onOpenQuickSearch={() => openNavigation("files")}
       />
 
+      <div className="workspace-trust-slot">
+        <WorkspaceTrustBanner
+          manager={workspaceTrust}
+          projectName={project.name}
+          onManage={() => setWorkspaceTrustOpen(true)}
+        />
+      </div>
+
       <div
         className="workspace"
         ref={workspaceRef}
@@ -1131,6 +1644,9 @@ export default function App({ safeMode = false }: AppProps) {
           project={project}
           activeView={sidebarView}
           selectedId={selectedNode?.id ?? null}
+          selectedFile={selectedFile}
+          debuggerManager={debuggerManager}
+          workspaceTrusted={workspaceTrust.trusted}
           canUseNativePaths={projectIsLocal && Boolean(window.divex)}
           canShare={
             projectIsLocal &&
@@ -1139,17 +1655,36 @@ export default function App({ safeMode = false }: AppProps) {
           hasClipboard={Boolean(explorerClipboard)}
           projectMenuOpen={projectMenuOpen}
           gitRefreshKey={gitRefreshKey}
+          newFileExtension={projectSettings.newFileExtension}
+          gitAutoRefresh={projectSettings.gitAutoRefresh}
+          confirmGitDiscard={projectSettings.confirmGitDiscard}
           onChangeView={setSidebarView}
           onToggleProjectMenu={() =>
             setProjectMenuOpen((value) => !value)
           }
           onOpenProject={openProject}
+          onOpenWslProject={() => void openWslProject()}
           onLoadDemo={() => {
             resetWorkspace(sampleProject);
             setProjectMenuOpen(false);
           }}
+          onOpenProjectSettings={() => {
+            setProjectMenuOpen(false);
+            setProjectSettingsOpen(true);
+          }}
+          onOpenWorkspaceTrust={() => {
+            setProjectMenuOpen(false);
+            setWorkspaceTrustOpen(true);
+          }}
           onSelectFile={selectFile}
           onSelectFolder={selectFolder}
+          onCreateEntry={(parentPath, kind, name) =>
+            void createExplorerEntry(parentPath, kind, name)
+          }
+          onDuplicateEntry={(entry) => void duplicateExplorerEntry(entry)}
+          onMoveEntry={(source, target) =>
+            void moveExplorerEntry(source, target)
+          }
           onRenameEntry={(entry, newName) =>
             void renameExplorerEntry(entry, newName)
           }
@@ -1168,6 +1703,22 @@ export default function App({ safeMode = false }: AppProps) {
           onOpenGitFile={(path) =>
             openNavigationTarget({ kind: "file", path, line: 1 })
           }
+          onGitRepositoryChanged={() => {
+            if (!window.divex || !projectIsLocal) return;
+            void window.divex
+              .refreshProject({ rootPath: payload.rootPath })
+              .then((result) => {
+                if (result.success && result.project) setPayload(result.project);
+              });
+          }}
+          onOpenDebugFrame={(frame) => {
+            if (!frame.filePath) return;
+            openNavigationTarget({
+              kind: "file",
+              path: frame.filePath,
+              line: frame.line,
+            });
+          }}
         />
 
         <WorkspaceResizer
@@ -1198,6 +1749,16 @@ export default function App({ safeMode = false }: AppProps) {
           showCode={showCode}
           editorRevealLine={editorRevealLine}
           editorRevealKey={editorRevealKey}
+          breakpoints={debuggerManager.breakpoints}
+          debugLocation={
+            debuggerManager.activeFrame?.filePath
+              ? {
+                  filePath: debuggerManager.activeFrame.filePath,
+                  line: debuggerManager.activeFrame.line,
+                }
+              : null
+          }
+          executionEnabled={workspaceTrust.trusted}
           twoDZoom={twoDZoom}
           logicZoom={logicZoom}
           workflowDirection={workflowDirection}
@@ -1229,6 +1790,7 @@ export default function App({ safeMode = false }: AppProps) {
           onTwoDPositionsChange={setTwoDPositions}
           onLogicPositionsChange={setLogicPositions}
           onPersistFile={persistFileContent}
+          onToggleBreakpoint={debuggerManager.toggleBreakpoint}
         />
 
         <WorkspaceResizer
@@ -1282,7 +1844,12 @@ export default function App({ safeMode = false }: AppProps) {
           <TerminalDock
             manager={terminal}
             tasks={projectTasks}
-            onOpenExternal={() => void openExternalTerminal()}
+            taskError={projectTaskError}
+            onOpenExternal={(profileId) => void openExternalTerminal(profileId)}
+            onConfigureTasks={() => void configureProjectTasks()}
+            onRunExternalTask={(taskId, profileId) => void runProjectTaskExternally(taskId, profileId)}
+            onOpenProblem={openTerminalProblem}
+            onOpenLink={(url) => void openTerminalLink(url)}
           />
         </Suspense>
       )}
@@ -1296,6 +1863,30 @@ export default function App({ safeMode = false }: AppProps) {
         onModeChange={setNavigationMode}
         onNavigate={openNavigationTarget}
         onClose={() => setNavigationOpen(false)}
+      />
+
+      <ProjectSettingsDialog
+        open={projectSettingsOpen}
+        projectName={project.name}
+        settings={projectSettings}
+        onClose={() => setProjectSettingsOpen(false)}
+        onSave={applyProjectSettings}
+      />
+
+      <WorkspaceTrustDialog
+        open={workspaceTrustOpen && workspaceTrust.enabled}
+        firstDecision={workspaceTrust.needsDecision}
+        projectName={project.name}
+        rootPath={payload.rootPath}
+        manager={workspaceTrust}
+        onClose={() => setWorkspaceTrustOpen(false)}
+        onChanged={(trusted) => {
+          showTransientNotice(
+            trusted
+              ? "Workspace trusted. Execution features are enabled."
+              : "Restricted Mode enabled. Execution features are disabled.",
+          );
+        }}
       />
 
       {(openingProject || isAnalyzing) && (

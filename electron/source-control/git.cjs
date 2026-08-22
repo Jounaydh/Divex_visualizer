@@ -2,6 +2,12 @@ const { execFile } = require("node:child_process");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { promisify } = require("node:util");
+const {
+  isContainedPath,
+  parseWslUncPath,
+  validateProjectRoot,
+} = require("../project/paths.cjs");
+const { runInWsl } = require("../platform/wsl.cjs");
 
 const execFileAsync = promisify(execFile);
 const GIT_BUFFER_BYTES = 16 * 1024 * 1024;
@@ -21,10 +27,10 @@ function gitError(error, fallback) {
 }
 
 function validateRootPath(rootPath) {
-  if (typeof rootPath !== "string" || !path.isAbsolute(rootPath)) {
-    throw new Error("Open a local project folder before using Git.");
-  }
-  return path.resolve(rootPath);
+  return validateProjectRoot(
+    rootPath,
+    "Open a project folder before using Git.",
+  );
 }
 
 function validateRelativePath(rootPath, relativePath) {
@@ -36,16 +42,19 @@ function validateRelativePath(rootPath, relativePath) {
     throw new Error("Choose a project file before using this Git action.");
   }
   const resolvedPath = path.resolve(rootPath, relativePath);
-  if (
-    resolvedPath !== rootPath &&
-    !resolvedPath.startsWith(`${rootPath}${path.sep}`)
-  ) {
+  if (!isContainedPath(rootPath, resolvedPath)) {
     throw new Error("The Git path is outside the opened project.");
   }
   return relativePath.split(path.sep).join("/");
 }
 
 async function runGit(rootPath, args, options = {}) {
+  if (parseWslUncPath(rootPath)) {
+    return runInWsl(rootPath, "git", args, {
+      maxBuffer: GIT_BUFFER_BYTES,
+      timeout: options.timeout ?? 30_000,
+    });
+  }
   return execFileAsync("git", args, {
     cwd: rootPath,
     encoding: "utf8",
@@ -157,6 +166,37 @@ async function getAheadBehind(rootPath) {
   }
 }
 
+async function getRepositoryMetadata(rootPath) {
+  const [branchesResult, remotesResult, upstreamResult] = await Promise.allSettled([
+    runGit(rootPath, [
+      "for-each-ref",
+      "--format=%(refname:short)",
+      "refs/heads",
+    ]),
+    runGit(rootPath, ["remote"]),
+    runGit(rootPath, [
+      "rev-parse",
+      "--abbrev-ref",
+      "--symbolic-full-name",
+      "@{upstream}",
+    ]),
+  ]);
+  return {
+    branches:
+      branchesResult.status === "fulfilled"
+        ? branchesResult.value.stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+        : [],
+    remotes:
+      remotesResult.status === "fulfilled"
+        ? remotesResult.value.stdout.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+        : [],
+    upstream:
+      upstreamResult.status === "fulfilled"
+        ? upstreamResult.value.stdout.trim() || undefined
+        : undefined,
+  };
+}
+
 async function getGitStatus(inputRootPath) {
   try {
     const rootPath = validateRootPath(inputRootPath);
@@ -165,7 +205,7 @@ async function getGitStatus(inputRootPath) {
       "--show-toplevel",
     ]);
     const repositoryRoot = repositoryRootOutput.trim();
-    const [{ stdout }, branch, tracking] = await Promise.all([
+    const [{ stdout }, branch, tracking, metadata] = await Promise.all([
       runGit(rootPath, [
         "status",
         "--porcelain=v1",
@@ -176,6 +216,7 @@ async function getGitStatus(inputRootPath) {
       ]),
       getBranch(rootPath),
       getAheadBehind(rootPath),
+      getRepositoryMetadata(rootPath),
     ]);
     return {
       success: true,
@@ -188,6 +229,9 @@ async function getGitStatus(inputRootPath) {
         detached: branch.detached,
         ahead: tracking.ahead,
         behind: tracking.behind,
+        upstream: metadata.upstream,
+        branches: metadata.branches,
+        remotes: metadata.remotes,
         entries: parsePorcelainStatus(stdout),
       },
     };
@@ -202,6 +246,8 @@ async function getGitStatus(inputRootPath) {
         detached: false,
         ahead: 0,
         behind: 0,
+        branches: [],
+        remotes: [],
         entries: [],
       },
     };
@@ -320,12 +366,158 @@ async function commitGit(inputRootPath, inputMessage) {
   }
 }
 
+function validateBranchName(name) {
+  const branchName = typeof name === "string" ? name.trim() : "";
+  if (
+    !branchName ||
+    branchName.length > 200 ||
+    /[\u0000-\u0020~^:?*\\]/.test(branchName) ||
+    branchName.startsWith("-") ||
+    branchName.startsWith("/") ||
+    branchName.endsWith("/") ||
+    branchName.endsWith(".") ||
+    branchName.includes("..") ||
+    branchName.includes("//") ||
+    branchName.includes("@{") ||
+    branchName.endsWith(".lock")
+  ) {
+    throw new Error("Enter a valid Git branch name.");
+  }
+  return branchName;
+}
+
+async function initializeRepository(inputRootPath) {
+  try {
+    const rootPath = validateRootPath(inputRootPath);
+    await runGit(rootPath, ["init"]);
+    return { success: true, output: "Git repository initialized." };
+  } catch (error) {
+    return gitError(error, "The Git repository could not be initialized.");
+  }
+}
+
+async function changeBranch(inputRootPath, inputBranch, create = false) {
+  try {
+    const rootPath = validateRootPath(inputRootPath);
+    const branch = validateBranchName(inputBranch);
+    await runGit(rootPath, create ? ["checkout", "-b", branch] : ["checkout", branch]);
+    return {
+      success: true,
+      output: create ? `Created and switched to ${branch}.` : `Switched to ${branch}.`,
+    };
+  } catch (error) {
+    return gitError(error, create ? "The branch could not be created." : "The branch could not be switched.");
+  }
+}
+
+async function syncRepository(inputRootPath, action) {
+  try {
+    const rootPath = validateRootPath(inputRootPath);
+    let args;
+    if (action === "fetch") {
+      args = ["fetch", "--prune"];
+    } else if (action === "pull") {
+      args = ["pull", "--ff-only"];
+    } else if (action === "push") {
+      const metadata = await getRepositoryMetadata(rootPath);
+      if (metadata.upstream) {
+        args = ["push"];
+      } else {
+        const { branch, detached } = await getBranch(rootPath);
+        if (detached) throw new Error("Switch to a branch before pushing.");
+        const remote = metadata.remotes.includes("origin")
+          ? "origin"
+          : metadata.remotes[0];
+        if (!remote) throw new Error("Add a Git remote before pushing.");
+        args = ["push", "--set-upstream", remote, branch];
+      }
+    } else {
+      throw new Error("Choose fetch, pull, or push.");
+    }
+    const { stdout, stderr } = await runGit(rootPath, args, { timeout: 120_000 });
+    return {
+      success: true,
+      output:
+        [stdout, stderr].filter(Boolean).join("\n").trim() ||
+        `${action[0].toUpperCase()}${action.slice(1)} completed.`,
+    };
+  } catch (error) {
+    return gitError(error, `Git ${action} could not be completed.`);
+  }
+}
+
+async function stashChanges(inputRootPath, action) {
+  try {
+    const rootPath = validateRootPath(inputRootPath);
+    const args =
+      action === "save"
+        ? ["stash", "push", "--include-untracked", "-m", "Divex work in progress"]
+        : action === "pop"
+          ? ["stash", "pop"]
+          : null;
+    if (!args) throw new Error("Choose whether to save or restore a stash.");
+    const { stdout, stderr } = await runGit(rootPath, args, { timeout: 120_000 });
+    return {
+      success: true,
+      output: [stdout, stderr].filter(Boolean).join("\n").trim() ||
+        (action === "save" ? "Changes stashed." : "Stash restored."),
+    };
+  } catch (error) {
+    return gitError(error, action === "save" ? "Changes could not be stashed." : "The stash could not be restored.");
+  }
+}
+
+async function discardChanges(inputRootPath, relativePath) {
+  try {
+    const rootPath = validateRootPath(inputRootPath);
+    if (relativePath) {
+      const filePath = validateRelativePath(rootPath, relativePath);
+      const statusResult = await getGitStatus(rootPath);
+      const entry = statusResult.status?.entries.find((item) => item.path === filePath);
+      if (entry?.untracked) {
+        await runGit(rootPath, ["clean", "-f", "--", filePath]);
+      } else {
+        try {
+          await runGit(rootPath, ["restore", "--worktree", "--", filePath]);
+        } catch {
+          await runGit(rootPath, ["checkout", "--", filePath]);
+        }
+      }
+      return { success: true, output: `Discarded working changes in ${filePath}.` };
+    }
+
+    let hasHead = true;
+    try {
+      await runGit(rootPath, ["rev-parse", "--verify", "HEAD"]);
+    } catch {
+      hasHead = false;
+    }
+    if (hasHead) {
+      try {
+        await runGit(rootPath, ["restore", "--worktree", "--", "."]);
+      } catch {
+        await runGit(rootPath, ["checkout", "--", "."]);
+      }
+    }
+    await runGit(rootPath, ["clean", "-fd", "--", "."]);
+    return { success: true, output: "Discarded all unstaged and untracked changes." };
+  } catch (error) {
+    return gitError(error, "Working changes could not be discarded.");
+  }
+}
+
 module.exports = {
+  changeBranch,
   commitGit,
+  discardChanges,
   getGitDiff,
   getGitStatus,
+  initializeRepository,
   mutateAll,
   mutatePath,
   parsePorcelainStatus,
+  stashChanges,
+  syncRepository,
+  validateBranchName,
   validateRelativePath,
 };

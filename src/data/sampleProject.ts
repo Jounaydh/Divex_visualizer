@@ -3,6 +3,7 @@ import type { ProjectPayload } from "../types";
 export const sampleProject: ProjectPayload = {
   name: "ocean_log",
   rootPath: "Demo project",
+  environment: { kind: "sample" },
   files: [
     {
       path: "lib/main.dart",
