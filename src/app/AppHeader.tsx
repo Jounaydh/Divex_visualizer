@@ -5,6 +5,7 @@ import {
   FileCode2,
   FolderOpen,
   Hammer,
+  Laptop,
   PanelTopOpen,
   Play,
   Search,
@@ -22,6 +23,8 @@ interface AppHeaderProps {
   terminalMenuOpen: boolean;
   terminalEnabled: boolean;
   miniEnabled: boolean;
+  wslEnabled: boolean;
+  wslLabel: string;
   tasks: ProjectTask[];
   canRunActiveFile: boolean;
   hasTerminalSessions: boolean;
@@ -34,6 +37,7 @@ interface AppHeaderProps {
   onToggleTerminalMenu: () => void;
   onCloseMenus: () => void;
   onOpenProject: () => void;
+  onOpenWslProject: () => void;
   onOpenMini: () => void;
   onToggleWorkspaceTrust: () => void;
   onNewTerminal: () => void;
@@ -54,6 +58,8 @@ export function AppHeader({
   terminalMenuOpen,
   terminalEnabled,
   miniEnabled,
+  wslEnabled,
+  wslLabel,
   tasks,
   canRunActiveFile,
   hasTerminalSessions,
@@ -66,6 +72,7 @@ export function AppHeader({
   onToggleTerminalMenu,
   onCloseMenus,
   onOpenProject,
+  onOpenWslProject,
   onOpenMini,
   onToggleWorkspaceTrust,
   onNewTerminal,
@@ -83,6 +90,7 @@ export function AppHeader({
   const [taskPickerOpen, setTaskPickerOpen] = useState(false);
   const menuBarRef = useRef<HTMLDivElement>(null);
   const buildTask = tasks.find((task) => task.group === "build");
+  const isMac = window.divex?.platform === "darwin";
 
   useEffect(() => {
     if (!terminalMenuOpen) setTaskPickerOpen(false);
@@ -141,6 +149,18 @@ export function AppHeader({
                   <FolderOpen size={14} />
                   <span>Open Folder…</span>
                 </button>
+                {!isMac && (
+                  <button
+                    type="button"
+                    disabled={!wslEnabled}
+                    title={wslLabel}
+                    onClick={() => runAndClose(onOpenWslProject)}
+                  >
+                    <Laptop size={14} />
+                    <span>Open WSL Folder…</span>
+                    <small>{wslLabel}</small>
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={!miniEnabled}
@@ -193,12 +213,12 @@ export function AppHeader({
                 >
                   <SquareTerminal size={14} />
                   <span>New Terminal</span>
-                  <kbd>⌃`</kbd>
+                  <kbd>{isMac ? "⌃`" : "Ctrl+`"}</kbd>
                 </button>
                 <button type="button" disabled>
                   <SquareTerminal size={14} />
                   <span>Split Terminal</span>
-                  <kbd>⌘\</kbd>
+                  <kbd>{isMac ? "⌘\\" : "Ctrl+\\"}</kbd>
                 </button>
                 <button
                   type="button"
@@ -227,7 +247,7 @@ export function AppHeader({
                 >
                   <Hammer size={14} />
                   <span>Run Build Task…</span>
-                  <kbd>⇧⌘B</kbd>
+                  <kbd>{isMac ? "⇧⌘B" : "Ctrl+Shift+B"}</kbd>
                 </button>
                 <button
                   type="button"
@@ -313,7 +333,7 @@ export function AppHeader({
           <button
             type="button"
             aria-label="Navigate back"
-            title="Back (⌥←)"
+            title={isMac ? "Back (⌥←)" : "Back (Alt+←)"}
             disabled={!canGoBack}
             onClick={onGoBack}
           >
@@ -322,7 +342,7 @@ export function AppHeader({
           <button
             type="button"
             aria-label="Navigate forward"
-            title="Forward (⌥→)"
+            title={isMac ? "Forward (⌥→)" : "Forward (Alt+→)"}
             disabled={!canGoForward}
             onClick={onGoForward}
           >
@@ -336,7 +356,7 @@ export function AppHeader({
         >
           <Search size={14} />
           <span>Search project</span>
-          <kbd>⌘P</kbd>
+          <kbd>{isMac ? "⌘P" : "Ctrl+P"}</kbd>
         </button>
       </div>
       <button type="button" className="ai-button" disabled>

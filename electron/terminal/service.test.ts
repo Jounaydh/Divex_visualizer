@@ -1,11 +1,12 @@
 import { createRequire } from "node:module";
+import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const {
   createTerminalService,
   resolveTerminalDirectory,
-} = require("./terminal-service.cjs") as {
+} = require("./service.cjs") as {
   createTerminalService: (options?: {
     ptyModule?: {
       spawn: ReturnType<typeof vi.fn>;
@@ -83,11 +84,12 @@ function fakePty() {
 
 describe("terminal service", () => {
   it("contains terminal directories inside the opened project", () => {
-    expect(resolveTerminalDirectory("/tmp/project", "lib")).toBe(
-      "/tmp/project/lib",
+    const rootPath = resolve("/tmp/project");
+    expect(resolveTerminalDirectory(rootPath, "lib")).toBe(
+      join(rootPath, "lib"),
     );
     expect(() =>
-      resolveTerminalDirectory("/tmp/project", "../outside"),
+      resolveTerminalDirectory(rootPath, "../outside"),
     ).toThrow("outside");
   });
 
@@ -100,9 +102,10 @@ describe("terminal service", () => {
       onEvent: (_owner, event) => events.push(event),
     });
 
+    const rootPath = resolve("/tmp/project");
     const created = service.create(
       {
-        rootPath: "/tmp/project",
+        rootPath,
         executable: "flutter",
         args: ["test"],
         title: "Flutter: Test",
@@ -121,7 +124,7 @@ describe("terminal service", () => {
       "flutter",
       ["test"],
       expect.objectContaining({
-        cwd: "/tmp/project",
+        cwd: rootPath,
         cols: 120,
         rows: 32,
       }),
@@ -145,7 +148,7 @@ describe("terminal service", () => {
     const service = createTerminalService({ ptyModule: pty.module });
     const session = service.create(
       {
-        rootPath: "/tmp/project",
+        rootPath: resolve("/tmp/project"),
         executable: "/bin/zsh",
       },
       owner,

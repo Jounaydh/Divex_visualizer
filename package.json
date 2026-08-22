@@ -1,41 +1,54 @@
 {
   "name": "divex-visualizer",
-  "version": "0.1.0",
+  "version": "0.8.0",
   "private": true,
-  "author": "Divex",
-  "license": "MIT",
+  "description": "A beginner-friendly desktop code visualizer for understanding project structure and logical execution flow.",
+  "author": {
+    "name": "Jounaydh",
+    "url": "https://github.com/Jounaydh"
+  },
+  "homepage": "https://github.com/Jounaydh/Divex_visualizer",
   "repository": {
     "type": "git",
     "url": "https://github.com/Jounaydh/Divex_visualizer.git"
   },
-  "description": "A beginner-friendly desktop code visualizer for understanding project structure and logical execution flow.",
+  "license": "UNLICENSED",
   "main": "electron/main.cjs",
   "engines": {
     "node": ">=22.12.0",
     "npm": ">=10"
   },
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
     "postinstall": "node scripts/prepare-terminal.cjs",
     "build": "tsc -b && vite build",
     "package": "npm run build && node scripts/package-desktop.cjs --dir",
     "dist": "npm run build && electron-builder --publish never",
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "dist:mac:unsigned": "npm run build && node scripts/package-desktop.cjs --mac dmg zip --publish never",
-    "dist:win": "npm run build && electron-builder --win nsis zip --publish never",
     "dist:linux": "npm run build && electron-builder --linux AppImage deb --publish never",
-    "check": "npm run test && npm run typecheck && npm run build",
+    "check": "npm run test && npm run test:languages && npm run typecheck && npm run build",
     "preview": "vite preview",
-    "desktop": "electron .",
+    "start": "npm run build && electron .",
+    "desktop": "npm run start",
     "test": "vitest run",
+    "test:languages": "node scripts/verify-language-support.cjs",
+    "test:windows": "node scripts/smoke-windows-services.cjs",
+    "test:wsl": "node scripts/smoke-wsl.cjs",
     "test:watch": "vitest",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "pack:win": "npm run build && node scripts/build-windows.cjs dir",
+    "dist:win": "npm run build && node scripts/build-windows.cjs",
+    "verify:win-signature": "node scripts/verify-windows-signature.cjs",
+    "dist:win:signed": "npm run dist:win && npm run verify:win-signature"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "ace-builds": "^1.44.0",
     "lucide-react": "^0.468.0",
-    "monaco-editor": "^0.56.0",
     "node-pty": "^1.1.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
@@ -50,22 +63,63 @@
     "concurrently": "^9.2.0",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
-    "jsdom": "^30.0.1",
+    "jsdom": "^28.1.0",
     "typescript": "~5.8.3",
     "vite": "^7.1.2",
     "vitest": "^4.1.10",
     "wait-on": "^8.0.4"
   },
+  "build": {
+    "appId": "com.divex.visualizer",
+    "productName": "Divex Visualizer",
+    "copyright": "Copyright © 2026 Jounaydh",
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.svg",
+      "legalTrademarks": "Divex Visualizer",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+    }
+  },
   "allowScripts": {
     "electron@43.2.0": true,
-    "electron-winstaller@5.4.0": true,
     "esbuild@0.28.1": true,
     "fsevents@2.3.3": true,
     "node-pty@1.1.0": true
-  },
-  "overrides": {
-    "monaco-editor": {
-      "dompurify": "3.4.13"
-    }
   }
 }

@@ -76,9 +76,9 @@ const symbolLocation = (
     file,
     {
       startLine: symbol.line,
-      startColumn: symbol.column,
+      startColumn: symbol.column ?? 1,
       endLine: symbol.endLine,
-      endColumn: symbol.endColumn,
+      endColumn: symbol.endColumn ?? 1,
     },
     symbol.id,
   );
@@ -298,7 +298,7 @@ export function buildLogicalWorkflowGraph(
           confidence: "exact",
           source: fileLocation(
             file,
-            lineRange(file.content, line, column, endColumn),
+            lineRange(file.content, line ?? 1, column ?? 1, endColumn),
           ),
           target: resolvedFile
             ? fileLocation(resolvedFile, lineRange(resolvedFile.content, 1))

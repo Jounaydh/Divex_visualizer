@@ -35,9 +35,11 @@ dmg:
   sign: false
 
 win:
-  icon: build/icon.png
+  icon: build/icon.svg
+  legalTrademarks: Divex Visualizer
   target:
     - nsis
+    - portable
     - zip
 
 nsis:
@@ -47,6 +49,9 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Divex Visualizer
   deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: ${productName}-Portable-${version}-${arch}.${ext}
 
 linux:
   icon: build/icon.png

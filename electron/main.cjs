@@ -3,34 +3,98 @@ const {
   BrowserWindow,
   clipboard,
   dialog,
-  ipcMain,
+  ipcMain: electronIpcMain,
   ShareMenu,
   shell,
 } = require("electron");
-const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
-const { fileURLToPath } = require("node:url");
-const { promisify } = require("node:util");
 const {
+  changeBranch,
   commitGit,
+  discardChanges,
   getGitDiff,
   getGitStatus,
+  initializeRepository,
   mutateAll: mutateAllGit,
   mutatePath: mutateGitPath,
-} = require("./git-service.cjs");
-const { loadProject } = require("./project-loader.cjs");
+  stashChanges,
+  syncRepository,
+} = require("./source-control/git.cjs");
+const { loadProject } = require("./project/loader.cjs");
+const { atomicSaveProjectFile } = require("./project/atomic-save.cjs");
+const {
+  clearRecovery,
+  listRecoveries,
+  writeRecovery,
+} = require("./project/recovery.cjs");
+const {
+  createProjectEntry,
+  duplicateProjectEntry,
+  transferProjectEntry,
+} = require("./project/mutations.cjs");
 const {
   createProjectWatcherService,
-} = require("./project-watcher.cjs");
-const { createTerminalService } = require("./terminal-service.cjs");
-const { WorkspaceTrustStore } = require("./workspace-trust.cjs");
+} = require("./project/watcher.cjs");
+const { createTerminalService } = require("./terminal/service.cjs");
+const { createDebugService } = require("./debug/service.cjs");
+const {
+  createWorkspaceTrustService,
+} = require("./security/workspace-trust.cjs");
+const {
+  createIpcAuthorization,
+} = require("./security/ipc-authorization.cjs");
+const {
+  hardenWebContents,
+  secureWebPreferences,
+} = require("./security/window-policy.cjs");
+const { runTool } = require("./platform/tool-runner.cjs");
+const { openTerminalWindow } = require("./terminal/external-window.cjs");
+const {
+  listTerminalProfiles,
+  publicTerminalProfile,
+  resolveTerminalProfile,
+} = require("./terminal/profiles.cjs");
+const {
+  parseWslUncPath,
+  resolveMutableProjectEntry,
+  resolveProjectFile,
+  validateEntryName,
+  validateProjectRoot,
+} = require("./project/paths.cjs");
+const {
+  detectProjectTasks,
+  runnerForFile,
+} = require("./project/tasks.cjs");
+const {
+  getWslHome,
+  getWslStatus,
+  runInWsl,
+} = require("./platform/wsl.cjs");
 
-const execFileAsync = promisify(execFile);
-
-const isDevelopment = !app.isPackaged;
+const APP_ID = "com.divex.visualizer";
+const isDevelopment = !app.isPackaged && process.argv.includes("--dev");
+const rendererPath = path.join(__dirname, "..", "dist", "index.html");
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
 const MAX_RENDERER_REPORT_LENGTH = 24_000;
+app.enableSandbox();
+const ipcAuthorization = createIpcAuthorization({
+  isDevelopment,
+  rendererPath,
+});
+const ipcMain = {
+  handle(channel, listener) {
+    return electronIpcMain.handle(channel, async (event, ...args) => {
+      ipcAuthorization.assertEvent(event, channel);
+      const rootPath = args[0]?.rootPath;
+      if (typeof rootPath === "string") {
+        ipcAuthorization.assertProject(event, rootPath);
+      }
+      return listener(event, ...args);
+    });
+  },
+};
 const terminalService = createTerminalService({
   onEvent(owner, terminalEvent) {
     if (owner && !owner.isDestroyed()) {
@@ -38,60 +102,21 @@ const terminalService = createTerminalService({
     }
   },
 });
+const debugService = createDebugService({
+  onEvent(owner, debugEvent) {
+    if (owner && !owner.isDestroyed()) {
+      owner.send("debug:event", debugEvent);
+    }
+  },
+});
+const workspaceTrustService = createWorkspaceTrustService({
+  storagePath: () =>
+    path.join(app.getPath("userData"), "security", "workspace-trust.json"),
+});
 const projectWatcherService = createProjectWatcherService();
 let miniWindow = null;
 let miniWindowState = null;
 let miniWindowStateTimer = null;
-let workspaceTrustStore = null;
-
-function getWorkspaceTrustStore() {
-  if (!workspaceTrustStore) {
-    workspaceTrustStore = new WorkspaceTrustStore({
-      storePath: path.join(app.getPath("userData"), "workspace-trust.json"),
-    });
-  }
-  return workspaceTrustStore;
-}
-
-function requireTrustedWorkspace(rootPath) {
-  return getWorkspaceTrustStore().requireTrusted(rootPath);
-}
-
-function isAllowedRendererNavigation(targetUrl) {
-  try {
-    const target = new URL(targetUrl);
-    if (isDevelopment) {
-      const renderer = new URL(
-        process.env.VITE_DEV_SERVER_URL || "http://localhost:5173",
-      );
-      return target.origin === renderer.origin;
-    }
-    return (
-      target.protocol === "file:" &&
-      path.resolve(fileURLToPath(target)) ===
-        path.resolve(__dirname, "..", "dist", "index.html")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function secureRendererNavigation(window) {
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const protocol = new URL(url).protocol;
-      if (protocol === "https:" || protocol === "http:") {
-        void shell.openExternal(url);
-      }
-    } catch {
-      // Invalid and non-web URLs remain denied.
-    }
-    return { action: "deny" };
-  });
-  window.webContents.on("will-navigate", (event, url) => {
-    if (!isAllowedRendererNavigation(url)) event.preventDefault();
-  });
-}
 
 function defaultMiniWindowState() {
   return {
@@ -194,18 +219,6 @@ function sanitizeRendererReport(report) {
   };
 }
 
-function resolveProjectFile(rootPath, relativePath) {
-  const resolvedRoot = path.resolve(rootPath);
-  const resolvedFile = path.resolve(resolvedRoot, relativePath);
-  if (
-    resolvedFile !== resolvedRoot &&
-    !resolvedFile.startsWith(`${resolvedRoot}${path.sep}`)
-  ) {
-    throw new Error("The requested file is outside the opened project.");
-  }
-  return resolvedFile;
-}
-
 function toolError(error, fallback) {
   const stdout = typeof error?.stdout === "string" ? error.stdout : "";
   const stderr = typeof error?.stderr === "string" ? error.stderr : "";
@@ -214,288 +227,6 @@ function toolError(error, fallback) {
       ? fallback
       : [stdout, stderr, error?.message].filter(Boolean).join("\n");
   return { success: false, output: message || fallback };
-}
-
-function resolveMutableProjectEntry(rootPath, relativePath) {
-  if (!path.isAbsolute(rootPath)) {
-    throw new Error("Open a local project folder before changing files.");
-  }
-  if (
-    typeof relativePath !== "string" ||
-    relativePath.length === 0
-  ) {
-    throw new Error("A project file or folder is required.");
-  }
-  const resolvedRoot = path.resolve(rootPath);
-  const resolvedEntry = resolveProjectFile(resolvedRoot, relativePath);
-  if (resolvedEntry === resolvedRoot) {
-    throw new Error("The project root cannot be renamed or deleted.");
-  }
-  return { resolvedRoot, resolvedEntry };
-}
-
-function validateEntryName(name) {
-  const nextName = typeof name === "string" ? name.trim() : "";
-  if (
-    !nextName ||
-    nextName === "." ||
-    nextName === ".." ||
-    path.basename(nextName) !== nextName
-  ) {
-    throw new Error("Enter a name without folder separators.");
-  }
-  return nextName;
-}
-
-async function pathExists(candidatePath) {
-  try {
-    await fs.access(candidatePath);
-    return true;
-  } catch (error) {
-    if (error?.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-async function uniqueCopyDestination(
-  destinationDirectory,
-  sourceName,
-  entryKind,
-) {
-  const extension = entryKind === "file" ? path.extname(sourceName) : "";
-  const baseName = extension
-    ? sourceName.slice(0, -extension.length)
-    : sourceName;
-  let index = 1;
-  let candidate = path.join(destinationDirectory, sourceName);
-  while (await pathExists(candidate)) {
-    const suffix = index === 1 ? " copy" : ` copy ${index}`;
-    candidate = path.join(
-      destinationDirectory,
-      `${baseName}${suffix}${extension}`,
-    );
-    index += 1;
-  }
-  return candidate;
-}
-
-async function readJsonIfPresent(filePath) {
-  try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function detectProjectTasks(rootPath) {
-  const tasks = [];
-  const packageJson = await readJsonIfPresent(
-    path.join(rootPath, "package.json"),
-  );
-  if (packageJson?.scripts && typeof packageJson.scripts === "object") {
-    Object.keys(packageJson.scripts)
-      .sort()
-      .forEach((scriptName) => {
-        const normalizedName = scriptName.toLowerCase();
-        const group =
-          normalizedName === "build" || normalizedName.startsWith("build:")
-            ? "build"
-            : normalizedName === "test" ||
-                normalizedName.startsWith("test:")
-              ? "test"
-              : ["start", "dev", "serve"].includes(normalizedName)
-                ? "run"
-                : "other";
-        tasks.push({
-          id: `npm:${scriptName}`,
-          label: `npm: ${scriptName}`,
-          group,
-          executable: "npm",
-          args: ["run", scriptName],
-        });
-      });
-  }
-
-  if (await pathExists(path.join(rootPath, "pubspec.yaml"))) {
-    const buildTarget =
-      process.platform === "darwin"
-        ? "macos"
-        : process.platform === "win32"
-          ? "windows"
-          : "linux";
-    tasks.push(
-      {
-        id: "flutter:pub-get",
-        label: "Flutter: Pub Get",
-        group: "other",
-        executable: "flutter",
-        args: ["pub", "get"],
-      },
-      {
-        id: "flutter:analyze",
-        label: "Flutter: Analyze",
-        group: "other",
-        executable: "flutter",
-        args: ["analyze"],
-      },
-      {
-        id: "flutter:test",
-        label: "Flutter: Test",
-        group: "test",
-        executable: "flutter",
-        args: ["test"],
-      },
-      {
-        id: "flutter:run",
-        label: "Flutter: Run",
-        group: "run",
-        executable: "flutter",
-        args: ["run"],
-      },
-      {
-        id: `flutter:build-${buildTarget}`,
-        label: `Flutter: Build ${buildTarget}`,
-        group: "build",
-        executable: "flutter",
-        args: ["build", buildTarget],
-      },
-    );
-  }
-
-  if (await pathExists(path.join(rootPath, "pom.xml"))) {
-    tasks.push(
-      {
-        id: "maven:package",
-        label: "Maven: Package",
-        group: "build",
-        executable: "mvn",
-        args: ["package"],
-      },
-      {
-        id: "maven:test",
-        label: "Maven: Test",
-        group: "test",
-        executable: "mvn",
-        args: ["test"],
-      },
-      {
-        id: "maven:clean",
-        label: "Maven: Clean",
-        group: "other",
-        executable: "mvn",
-        args: ["clean"],
-      },
-    );
-  }
-
-  const gradleWrapper =
-    process.platform === "win32" ? "gradlew.bat" : "gradlew";
-  const gradlePath = path.join(rootPath, gradleWrapper);
-  if (
-    (await pathExists(gradlePath)) ||
-    (await pathExists(path.join(rootPath, "build.gradle")))
-  ) {
-    const executable = (await pathExists(gradlePath))
-      ? gradlePath
-      : "gradle";
-    tasks.push(
-      {
-        id: "gradle:build",
-        label: "Gradle: Build",
-        group: "build",
-        executable,
-        args: ["build"],
-      },
-      {
-        id: "gradle:test",
-        label: "Gradle: Test",
-        group: "test",
-        executable,
-        args: ["test"],
-      },
-    );
-  }
-
-  if (await pathExists(path.join(rootPath, "Makefile"))) {
-    tasks.push({
-      id: "make:default",
-      label: "Make: Default",
-      group: "build",
-      executable: "make",
-      args: [],
-    });
-  }
-
-  return tasks;
-}
-
-function quotePosixArgument(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
-}
-
-function terminalCommand(executable, args) {
-  if (process.platform === "win32") {
-    return [executable, ...args]
-      .map((value) => `"${String(value).replaceAll('"', '""')}"`)
-      .join(" ");
-  }
-  return [executable, ...args].map(quotePosixArgument).join(" ");
-}
-
-async function openTerminalWindow(directory, command) {
-  if (!command) {
-    if (process.platform === "darwin") {
-      await execFileAsync("open", ["-a", "Terminal", directory]);
-    } else if (process.platform === "win32") {
-      await execFileAsync("cmd.exe", [
-        "/c",
-        "start",
-        "",
-        "cmd.exe",
-        "/K",
-        "cd",
-        "/d",
-        directory,
-      ]);
-    } else {
-      const terminal = spawn(
-        "x-terminal-emulator",
-        ["--working-directory", directory],
-        { detached: true, stdio: "ignore" },
-      );
-      terminal.unref();
-    }
-    return;
-  }
-
-  if (process.platform === "darwin") {
-    const shellCommand = `cd ${quotePosixArgument(directory)} && ${command}`;
-    const appleScriptCommand = shellCommand
-      .replaceAll("\\", "\\\\")
-      .replaceAll('"', '\\"');
-    await execFileAsync("osascript", [
-      "-e",
-      `tell application "Terminal" to do script "${appleScriptCommand}"`,
-    ]);
-  } else if (process.platform === "win32") {
-    await execFileAsync("cmd.exe", [
-      "/c",
-      "start",
-      "",
-      "cmd.exe",
-      "/K",
-      `cd /d "${directory}" && ${command}`,
-    ]);
-  } else {
-    const shellCommand = `cd ${quotePosixArgument(directory)} && ${command}`;
-    const terminal = spawn(
-      "x-terminal-emulator",
-      ["-e", "bash", "-lc", shellCommand],
-      { detached: true, stdio: "ignore" },
-    );
-    terminal.unref();
-  }
 }
 
 function loadRenderer(window, safeMode = false, rendererQuery = {}) {
@@ -512,7 +243,7 @@ function loadRenderer(window, safeMode = false, rendererQuery = {}) {
     });
     return window.loadURL(url.toString());
   }
-  return window.loadFile(path.join(__dirname, "..", "dist", "index.html"), {
+  return window.loadFile(rendererPath, {
     query,
   });
 }
@@ -596,27 +327,38 @@ function attachRendererRecovery(window, rendererQuery = {}) {
 }
 
 function createWindow() {
+  const platformTitleBar =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 18, y: 16 },
+        }
+      : {
+          titleBarStyle: "hidden",
+          titleBarOverlay: {
+            color: "#141519",
+            symbolColor: "#d7d9df",
+            height: 52,
+          },
+        };
   const window = new BrowserWindow({
     width: 1510,
     height: 940,
     minWidth: 1120,
     minHeight: 720,
     backgroundColor: "#101114",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    trafficLightPosition: { x: 18, y: 16 },
-    webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
+    autoHideMenuBar: true,
+    ...platformTitleBar,
+    webPreferences: secureWebPreferences(path.join(__dirname, "preload.cjs")),
   });
 
-  secureRendererNavigation(window);
+  ipcAuthorization.register(window.webContents, "main");
+  hardenWebContents(window.webContents);
   attachRendererRecovery(window);
   const terminalOwner = window.webContents;
   terminalOwner.once("destroyed", () => {
     terminalService.closeOwnerSessions(terminalOwner);
+    debugService.closeOwnerSessions(terminalOwner);
   });
   void loadRenderer(window);
 }
@@ -631,6 +373,9 @@ async function createMiniWindow(rootPath) {
     rootPath: resolvedRoot,
   };
   if (miniWindow && !miniWindow.isDestroyed()) {
+    if (resolvedRoot) {
+      ipcAuthorization.setProject(miniWindow.webContents, resolvedRoot);
+    }
     await loadRenderer(miniWindow, false, rendererQuery);
     miniWindow.show();
     miniWindow.focus();
@@ -638,6 +383,20 @@ async function createMiniWindow(rootPath) {
   }
 
   const state = await loadMiniWindowState();
+  const platformTitleBar =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 14, y: 13 },
+        }
+      : {
+          titleBarStyle: "hidden",
+          titleBarOverlay: {
+            color: "#141519",
+            symbolColor: "#d7d9df",
+            height: 46,
+          },
+        };
   miniWindow = new BrowserWindow({
     width: state.width,
     height: state.height,
@@ -648,17 +407,16 @@ async function createMiniWindow(rootPath) {
     minHeight: 320,
     backgroundColor: "#101114",
     title: "Divex Mini",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    trafficLightPosition: { x: 14, y: 13 },
+    autoHideMenuBar: true,
+    ...platformTitleBar,
     show: false,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
+    webPreferences: secureWebPreferences(path.join(__dirname, "preload.cjs")),
   });
-  secureRendererNavigation(miniWindow);
+  ipcAuthorization.register(miniWindow.webContents, "mini");
+  if (resolvedRoot) {
+    ipcAuthorization.setProject(miniWindow.webContents, resolvedRoot);
+  }
+  hardenWebContents(miniWindow.webContents);
   miniWindow.setAlwaysOnTop(Boolean(state.alwaysOnTop), "floating");
   attachRendererRecovery(miniWindow, rendererQuery);
   miniWindow.on("move", () => scheduleMiniWindowStateSave(miniWindow));
@@ -731,48 +489,6 @@ ipcMain.handle("app:set-mini-always-on-top", async (event, args) => {
   };
 });
 
-ipcMain.handle("workspace:get-trust", async (_event, args) => {
-  try {
-    const status = await getWorkspaceTrustStore().get(args?.rootPath);
-    return {
-      success: true,
-      output: status.trusted
-        ? "This workspace is trusted."
-        : "This workspace is open in Restricted Mode.",
-      ...status,
-    };
-  } catch (error) {
-    return {
-      ...toolError(error, "Workspace trust could not be checked."),
-      trusted: false,
-    };
-  }
-});
-
-ipcMain.handle("workspace:set-trust", async (event, args) => {
-  try {
-    const status = await getWorkspaceTrustStore().set(
-      args?.rootPath,
-      Boolean(args?.trusted),
-    );
-    if (!status.trusted) {
-      terminalService.closeOwnerSessions(event.sender);
-    }
-    return {
-      success: true,
-      output: status.trusted
-        ? "Workspace trusted. Project tools are enabled."
-        : "Workspace trust revoked. Project tools are now restricted.",
-      ...status,
-    };
-  } catch (error) {
-    return {
-      ...toolError(error, "Workspace trust could not be changed."),
-      trusted: false,
-    };
-  }
-});
-
 function projectProgressReporter(event) {
   return (progress) => {
     if (!event.sender.isDestroyed()) {
@@ -781,30 +497,114 @@ function projectProgressReporter(event) {
   };
 }
 
+async function loadOpenedProject(event, rootPath) {
+  const project = await loadProject(rootPath, projectProgressReporter(event));
+  if (project.files.length === 0) {
+    throw new Error("No supported source files were found in that folder.");
+  }
+  ipcAuthorization.setProject(event.sender, project.rootPath);
+  return project;
+}
+
+ipcMain.handle("app:wsl-status", async () => getWslStatus());
+
+ipcMain.handle("workspace-trust:get", async (_event, args) => {
+  try {
+    return {
+      success: true,
+      output: "Workspace trust loaded.",
+      status: await workspaceTrustService.getStatus(args?.rootPath),
+    };
+  } catch (error) {
+    return toolError(error, "Workspace trust could not be loaded.");
+  }
+});
+
+ipcMain.handle("workspace-trust:set", async (event, args) => {
+  try {
+    const status = await workspaceTrustService.setTrusted(
+      args?.rootPath,
+      Boolean(args?.trusted),
+    );
+    if (!status.trusted) {
+      terminalService.closeOwnerSessions(event.sender);
+      debugService.closeOwnerSessions(event.sender);
+    }
+    return {
+      success: true,
+      output: status.trusted
+        ? "Workspace trusted. Project execution is enabled."
+        : "Workspace opened in Restricted Mode.",
+      status,
+    };
+  } catch (error) {
+    return toolError(error, "Workspace trust could not be changed.");
+  }
+});
+
 ipcMain.handle("project:choose", async (event) => {
-  const result = await dialog.showOpenDialog({
+  const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+  const result = await dialog.showOpenDialog(owner, {
     title: "Open a project in Divex",
     properties: ["openDirectory"],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
+  return loadOpenedProject(event, result.filePaths[0]);
+});
 
-  const rootPath = result.filePaths[0];
-  const project = await loadProject(
-    rootPath,
-    projectProgressReporter(event),
-  );
-  const { files } = project;
-  if (files.length === 0) {
-    throw new Error("No supported source files were found in that folder.");
+ipcMain.handle("project:choose-wsl", async (event) => {
+  const status = await getWslStatus();
+  if (!status.available) throw new Error(status.output);
+  const distributions = status.distributions
+    .filter((item) => !item.system)
+    .sort((left, right) => {
+      if (left.name === status.defaultDistribution) return -1;
+      if (right.name === status.defaultDistribution) return 1;
+      return left.name.localeCompare(right.name);
+    });
+  const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+  let distribution = distributions[0]?.name;
+  if (distributions.length > 1) {
+    const buttons = [...distributions.map((item) => item.name), "Cancel"];
+    const selection = await dialog.showMessageBox(owner, {
+      type: "question",
+      title: "Open a WSL project",
+      message: "Choose a Linux distribution",
+      detail:
+        "Divex will open and edit the project directly in its Linux filesystem.",
+      buttons,
+      defaultId: 0,
+      cancelId: buttons.length - 1,
+      noLink: true,
+    });
+    if (selection.response === buttons.length - 1) return null;
+    distribution = distributions[selection.response]?.name;
   }
+  if (!distribution) throw new Error("No WSL distribution was selected.");
 
-  return project;
+  const home = await getWslHome(distribution);
+  const result = await dialog.showOpenDialog(owner, {
+    title: `Open a ${distribution} project in Divex`,
+    defaultPath: home.windowsPath,
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  const selected = parseWslUncPath(result.filePaths[0]);
+  if (
+    !selected ||
+    selected.distribution.toLowerCase() !== distribution.toLowerCase()
+  ) {
+    throw new Error(
+      `Choose a folder inside the ${distribution} Linux filesystem.`,
+    );
+  }
+  return loadOpenedProject(event, result.filePaths[0]);
 });
 
 ipcMain.handle("project:refresh", async (event, args) => {
   try {
     if (!path.isAbsolute(args.rootPath)) {
-      throw new Error("Open a local project folder before refreshing.");
+      throw new Error("Open a project folder before refreshing.");
     }
     return {
       success: true,
@@ -822,7 +622,7 @@ ipcMain.handle("project:refresh", async (event, args) => {
 ipcMain.handle("project:watch", async (event, args) => {
   try {
     if (!path.isAbsolute(args?.rootPath)) {
-      throw new Error("Open a local project folder before watching it.");
+      throw new Error("Open a project folder before watching it.");
     }
     const rootPath = projectWatcherService.start(
       event.sender,
@@ -841,6 +641,61 @@ ipcMain.handle("project:watch", async (event, args) => {
 ipcMain.handle("project:unwatch", async (event) => {
   projectWatcherService.stop(event.sender);
   return { success: true, output: "Live project watching stopped." };
+});
+
+ipcMain.handle("project:create-entry", async (event, args) => {
+  try {
+    const resolvedRoot = validateProjectRoot(
+      args?.rootPath,
+      "Open a project folder before creating an item.",
+    );
+    const result = await createProjectEntry({
+      rootPath: resolvedRoot,
+      parentPath: args?.parentPath,
+      entryKind: args?.entryKind,
+      name: args?.name,
+    });
+    if (result.conflict) {
+      return {
+        success: false,
+        conflict: true,
+        output: result.output,
+        suggestedName: result.suggestedName,
+      };
+    }
+    return {
+      success: true,
+      output: result.output,
+      entryPath: result.entryPath,
+      project: await loadProject(
+        resolvedRoot,
+        projectProgressReporter(event),
+      ),
+    };
+  } catch (error) {
+    return toolError(error, "The project item could not be created.");
+  }
+});
+
+ipcMain.handle("project:duplicate-entry", async (event, args) => {
+  try {
+    const result = await duplicateProjectEntry({
+      rootPath: args?.rootPath,
+      sourcePath: args?.sourcePath,
+      sourceKind: args?.sourceKind,
+    });
+    return {
+      success: true,
+      output: result.output,
+      entryPath: result.entryPath,
+      project: await loadProject(
+        validateProjectRoot(args.rootPath),
+        projectProgressReporter(event),
+      ),
+    };
+  } catch (error) {
+    return toolError(error, "The project item could not be duplicated.");
+  }
 });
 
 ipcMain.handle("project:rename-entry", async (event, args) => {
@@ -885,16 +740,22 @@ ipcMain.handle("project:delete-entry", async (event, args) => {
       args.rootPath,
       args.entryPath,
     );
+    const wslEntry = parseWslUncPath(resolvedEntry);
     const owner = BrowserWindow.fromWebContents(event.sender);
     const options = {
       type: "warning",
       title: "Delete project item",
-      message: `Move “${path.basename(resolvedEntry)}” to the Trash?`,
-      detail:
-        args.entryKind === "folder"
+      message: wslEntry
+        ? `Permanently delete “${path.basename(resolvedEntry)}”?`
+        : `Move “${path.basename(resolvedEntry)}” to the Trash?`,
+      detail: wslEntry
+        ? args.entryKind === "folder"
+          ? "WSL folders do not use the Windows Trash. This folder and everything inside it cannot be recovered by Divex."
+          : "WSL files do not use the Windows Trash. This file cannot be recovered by Divex."
+        : args.entryKind === "folder"
           ? "The folder and everything inside it will be moved to the Trash."
           : "The file will be moved to the Trash.",
-      buttons: ["Cancel", "Move to Trash"],
+      buttons: ["Cancel", wslEntry ? "Delete permanently" : "Move to Trash"],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
@@ -909,10 +770,19 @@ ipcMain.handle("project:delete-entry", async (event, args) => {
         output: "Delete cancelled.",
       };
     }
-    await shell.trashItem(resolvedEntry);
+    if (wslEntry) {
+      await fs.rm(resolvedEntry, {
+        recursive: args.entryKind === "folder",
+        force: false,
+      });
+    } else {
+      await shell.trashItem(resolvedEntry);
+    }
     return {
       success: true,
-      output: `Moved ${path.basename(resolvedEntry)} to the Trash.`,
+      output: wslEntry
+        ? `Permanently deleted ${path.basename(resolvedEntry)} from WSL.`
+        : `Moved ${path.basename(resolvedEntry)} to the Trash.`,
       project: await loadProject(
         resolvedRoot,
         projectProgressReporter(event),
@@ -942,10 +812,19 @@ ipcMain.handle("project:copy-entry-path", async (_event, args) => {
       args.rootPath,
       args.entryPath,
     );
-    clipboard.writeText(args.relative ? args.entryPath : resolvedEntry);
+    const wslEntry = parseWslUncPath(resolvedEntry);
+    clipboard.writeText(
+      args.relative
+        ? args.entryPath
+        : wslEntry?.linuxPath ?? resolvedEntry,
+    );
     return {
       success: true,
-      output: args.relative ? "Relative path copied." : "Path copied.",
+      output: args.relative
+        ? "Relative path copied."
+        : wslEntry
+          ? "Linux path copied."
+          : "Path copied.",
     };
   } catch (error) {
     return toolError(error, "The path could not be copied.");
@@ -954,11 +833,11 @@ ipcMain.handle("project:copy-entry-path", async (_event, args) => {
 
 ipcMain.handle("project:open-entry", async (_event, args) => {
   try {
-    await requireTrustedWorkspace(args?.rootPath);
-    const { resolvedEntry } = resolveMutableProjectEntry(
+    const { resolvedRoot, resolvedEntry } = resolveMutableProjectEntry(
       args.rootPath,
       args.entryPath,
     );
+    await workspaceTrustService.requireTrusted(resolvedRoot);
     const errorMessage = await shell.openPath(resolvedEntry);
     if (errorMessage) throw new Error(errorMessage);
     return { success: true, output: "Opened in the default application." };
@@ -970,9 +849,10 @@ ipcMain.handle("project:open-entry", async (_event, args) => {
 ipcMain.handle("project:open-terminal", async (_event, args) => {
   try {
     if (!path.isAbsolute(args.rootPath)) {
-      throw new Error("Open a local project folder before launching a terminal.");
+      throw new Error("Open a project folder before launching a terminal.");
     }
-    const resolvedRoot = await requireTrustedWorkspace(args.rootPath);
+    const resolvedRoot = path.resolve(args.rootPath);
+    await workspaceTrustService.requireTrusted(resolvedRoot);
     let directory = resolvedRoot;
     if (args.entryPath) {
       const { resolvedEntry } = resolveMutableProjectEntry(
@@ -984,7 +864,8 @@ ipcMain.handle("project:open-terminal", async (_event, args) => {
           ? resolvedEntry
           : path.dirname(resolvedEntry);
     }
-    await openTerminalWindow(directory);
+    const profile = await resolveTerminalProfile(resolvedRoot, args?.profileId);
+    await openTerminalWindow(directory, undefined, profile);
     return { success: true, output: "Terminal opened." };
   } catch (error) {
     return toolError(error, "A terminal could not be opened here.");
@@ -994,13 +875,22 @@ ipcMain.handle("project:open-terminal", async (_event, args) => {
 ipcMain.handle("project:list-tasks", async (_event, args) => {
   try {
     if (!path.isAbsolute(args.rootPath)) {
-      throw new Error("Open a local project folder to discover tasks.");
+      throw new Error("Open a project folder to discover tasks.");
     }
-    const tasks = await detectProjectTasks(path.resolve(args.rootPath));
+    const resolvedRoot = path.resolve(args.rootPath);
+    await workspaceTrustService.requireTrusted(resolvedRoot);
+    const tasks = await detectProjectTasks(resolvedRoot);
     return {
       success: true,
       output: `${tasks.length} tasks found.`,
-      tasks: tasks.map(({ id, label, group }) => ({ id, label, group })),
+      tasks: tasks.map(({ id, label, group, source, detail, problemMatcher }) => ({
+        id,
+        label,
+        group,
+        source,
+        detail,
+        problemMatcher,
+      })),
     };
   } catch (error) {
     return toolError(error, "Project tasks could not be discovered.");
@@ -1010,16 +900,16 @@ ipcMain.handle("project:list-tasks", async (_event, args) => {
 ipcMain.handle("project:run-task", async (_event, args) => {
   try {
     if (!path.isAbsolute(args.rootPath)) {
-      throw new Error("Open a local project folder before running a task.");
+      throw new Error("Open a project folder before running a task.");
     }
-    const resolvedRoot = await requireTrustedWorkspace(args.rootPath);
+    const resolvedRoot = path.resolve(args.rootPath);
+    await workspaceTrustService.requireTrusted(resolvedRoot);
     const tasks = await detectProjectTasks(resolvedRoot);
     const task = tasks.find((candidate) => candidate.id === args.taskId);
     if (!task) throw new Error("That task is no longer available.");
-    await openTerminalWindow(
-      resolvedRoot,
-      terminalCommand(task.executable, task.args),
-    );
+    const profile = await resolveTerminalProfile(resolvedRoot, args?.profileId);
+    const taskDirectory = task.cwd ? path.resolve(resolvedRoot, task.cwd) : resolvedRoot;
+    await openTerminalWindow(taskDirectory, task, profile);
     return {
       success: true,
       output: `Started ${task.label} in Terminal.`,
@@ -1031,25 +921,18 @@ ipcMain.handle("project:run-task", async (_event, args) => {
 
 ipcMain.handle("project:run-file", async (_event, args) => {
   try {
-    await requireTrustedWorkspace(args?.rootPath);
     const { resolvedRoot, resolvedEntry } = resolveMutableProjectEntry(
       args.rootPath,
       args.entryPath,
     );
-    const extension = path.extname(resolvedEntry).toLowerCase();
-    const runner =
-      extension === ".dart"
-        ? { executable: "dart", args: ["run", resolvedEntry] }
-        : extension === ".py"
-          ? { executable: "python3", args: [resolvedEntry] }
-          : null;
+    await workspaceTrustService.requireTrusted(resolvedRoot);
+    const runner = runnerForFile(resolvedRoot, resolvedEntry);
     if (!runner) {
-      throw new Error("Run Active File currently supports Dart and Python.");
+      throw new Error(
+        "Run Active File supports Dart, Python, Java, JavaScript, and TypeScript.",
+      );
     }
-    await openTerminalWindow(
-      resolvedRoot,
-      terminalCommand(runner.executable, runner.args),
-    );
+    await openTerminalWindow(resolvedRoot, runner);
     return {
       success: true,
       output: `Started ${path.basename(resolvedEntry)} in Terminal.`,
@@ -1061,14 +944,20 @@ ipcMain.handle("project:run-file", async (_event, args) => {
 
 ipcMain.handle("terminal:create", async (event, args) => {
   try {
-    const resolvedRoot = await requireTrustedWorkspace(args?.rootPath);
+    const resolvedRoot = await workspaceTrustService.requireTrusted(
+      args?.rootPath,
+    );
+    const profile = await resolveTerminalProfile(resolvedRoot, args?.profileId);
     return terminalService.create(
       {
         rootPath: resolvedRoot,
         cwd: args?.cwd,
+        executable: profile.executable,
+        args: profile.args,
         cols: args?.cols,
         rows: args?.rows,
-        title: args?.title || "Terminal",
+        title: args?.title || profile.label,
+        profileId: profile.id,
         kind: "shell",
       },
       event.sender,
@@ -1078,18 +967,48 @@ ipcMain.handle("terminal:create", async (event, args) => {
   }
 });
 
+ipcMain.handle("terminal:list-profiles", async (_event, args) => {
+  try {
+    const resolvedRoot = await workspaceTrustService.requireTrusted(args?.rootPath);
+    const profiles = await listTerminalProfiles(resolvedRoot);
+    return {
+      success: true,
+      output: `${profiles.length} terminal profiles available.`,
+      profiles: profiles.map(publicTerminalProfile),
+    };
+  } catch (error) {
+    return toolError(error, "Terminal profiles could not be loaded.");
+  }
+});
+
+ipcMain.handle("terminal:open-link", async (_event, args) => {
+  try {
+    await workspaceTrustService.requireTrusted(args?.rootPath);
+    const target = new URL(args?.url);
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      throw new Error("Only HTTP and HTTPS terminal links can be opened.");
+    }
+    await shell.openExternal(target.toString());
+    return { success: true, output: "Link opened in the default browser." };
+  } catch (error) {
+    return toolError(error, "The terminal link could not be opened.");
+  }
+});
+
 ipcMain.handle("terminal:run-task", async (event, args) => {
   try {
     if (!path.isAbsolute(args?.rootPath)) {
-      throw new Error("Open a local project folder before running a task.");
+      throw new Error("Open a project folder before running a task.");
     }
-    const resolvedRoot = await requireTrustedWorkspace(args.rootPath);
+    const resolvedRoot = path.resolve(args.rootPath);
+    await workspaceTrustService.requireTrusted(resolvedRoot);
     const tasks = await detectProjectTasks(resolvedRoot);
     const task = tasks.find((candidate) => candidate.id === args.taskId);
     if (!task) throw new Error("That task is no longer available.");
     return terminalService.create(
       {
         rootPath: resolvedRoot,
+        cwd: task.cwd,
         executable: task.executable,
         args: task.args,
         cols: args?.cols,
@@ -1097,6 +1016,7 @@ ipcMain.handle("terminal:run-task", async (event, args) => {
         title: task.label,
         kind: "task",
         taskId: task.id,
+        problemMatcher: task.problemMatcher,
       },
       event.sender,
     );
@@ -1107,20 +1027,16 @@ ipcMain.handle("terminal:run-task", async (event, args) => {
 
 ipcMain.handle("terminal:run-file", async (event, args) => {
   try {
-    await requireTrustedWorkspace(args?.rootPath);
     const { resolvedRoot, resolvedEntry } = resolveMutableProjectEntry(
       args?.rootPath,
       args?.entryPath,
     );
-    const extension = path.extname(resolvedEntry).toLowerCase();
-    const runner =
-      extension === ".dart"
-        ? { executable: "dart", args: ["run", resolvedEntry] }
-        : extension === ".py"
-          ? { executable: "python3", args: [resolvedEntry] }
-          : null;
+    await workspaceTrustService.requireTrusted(resolvedRoot);
+    const runner = runnerForFile(resolvedRoot, resolvedEntry);
     if (!runner) {
-      throw new Error("Run Active File currently supports Dart and Python.");
+      throw new Error(
+        "Run Active File supports Dart, Python, Java, JavaScript, and TypeScript.",
+      );
     }
     return terminalService.create(
       {
@@ -1168,6 +1084,48 @@ ipcMain.handle("terminal:close-all", async (event) => {
   return { success: true, output: "All terminal sessions closed." };
 });
 
+ipcMain.handle("debug:start", async (event, args) => {
+  try {
+    await workspaceTrustService.requireTrusted(args?.rootPath);
+    return debugService.start(args, event.sender);
+  } catch (error) {
+    return toolError(error, "The debugger could not be started.");
+  }
+});
+
+ipcMain.handle("debug:set-breakpoints", async (event, args) =>
+  debugService.setBreakpoints(args, event.sender),
+);
+
+ipcMain.handle("debug:stack", async (event, args) =>
+  debugService.stack(args, event.sender),
+);
+
+ipcMain.handle("debug:scopes", async (event, args) =>
+  debugService.scopes(args, event.sender),
+);
+
+ipcMain.handle("debug:variables", async (event, args) =>
+  debugService.variables(args, event.sender),
+);
+
+ipcMain.handle("debug:control", async (event, args) =>
+  debugService.control(args, event.sender),
+);
+
+ipcMain.handle("debug:disconnect", async (event, args) =>
+  debugService.disconnect(args?.sessionId, event.sender),
+);
+
+ipcMain.handle("debug:install-python-adapter", async (_event, args) => {
+  try {
+    await workspaceTrustService.requireTrusted(args?.rootPath);
+    return debugService.installPythonAdapter(args?.rootPath);
+  } catch (error) {
+    return toolError(error, "Python debugger setup is disabled in Restricted Mode.");
+  }
+});
+
 ipcMain.handle("project:share-entry", async (event, args) => {
   try {
     if (process.platform !== "darwin") {
@@ -1188,70 +1146,40 @@ ipcMain.handle("project:share-entry", async (event, args) => {
 
 ipcMain.handle("project:paste-entry", async (event, args) => {
   try {
-    const { resolvedRoot, resolvedEntry: sourceEntry } =
-      resolveMutableProjectEntry(args.rootPath, args.sourcePath);
-    const { resolvedEntry: targetEntry } = resolveMutableProjectEntry(
-      args.rootPath,
-      args.targetPath,
-    );
-    const destinationDirectory =
-      args.targetKind === "folder"
-        ? targetEntry
-        : path.dirname(targetEntry);
-
-    if (
-      args.sourceKind === "folder" &&
-      (destinationDirectory === sourceEntry ||
-        destinationDirectory.startsWith(`${sourceEntry}${path.sep}`))
-    ) {
-      throw new Error("A folder cannot be pasted inside itself.");
+    const resolvedRoot = validateProjectRoot(args?.rootPath);
+    const result = await transferProjectEntry({
+      rootPath: resolvedRoot,
+      sourcePath: args?.sourcePath,
+      sourceKind: args?.sourceKind,
+      targetPath: args?.targetPath,
+      targetKind: args?.targetKind,
+      mode: args?.mode,
+      destinationName: args?.destinationName,
+    });
+    if (result.conflict) {
+      return {
+        success: false,
+        conflict: true,
+        output: result.output,
+        suggestedName: result.suggestedName,
+      };
     }
-
-    let destinationEntry = path.join(
-      destinationDirectory,
-      path.basename(sourceEntry),
-    );
-    resolveProjectFile(
-      resolvedRoot,
-      path.relative(resolvedRoot, destinationEntry),
-    );
-
-    if (args.mode === "copy") {
-      destinationEntry = await uniqueCopyDestination(
-        destinationDirectory,
-        path.basename(sourceEntry),
-        args.sourceKind,
-      );
-      await fs.cp(sourceEntry, destinationEntry, {
-        recursive: args.sourceKind === "folder",
-        errorOnExist: true,
-      });
-    } else {
-      if (destinationEntry === sourceEntry) {
-        throw new Error("The item is already in this folder.");
-      }
-      if (await pathExists(destinationEntry)) {
-        throw new Error(
-          `“${path.basename(destinationEntry)}” already exists here.`,
-        );
-      }
-      await fs.rename(sourceEntry, destinationEntry);
+    if (result.unchanged) {
+      return {
+        success: false,
+        unchanged: true,
+        output: result.output,
+        entryPath: result.entryPath,
+      };
     }
-
     return {
       success: true,
-      output:
-        args.mode === "copy"
-          ? `Copied ${path.basename(destinationEntry)}.`
-          : `Moved ${path.basename(destinationEntry)}.`,
+      output: result.output,
       project: await loadProject(
         resolvedRoot,
         projectProgressReporter(event),
       ),
-      entryPath: path
-        .relative(resolvedRoot, destinationEntry)
-        .split(path.sep)
-        .join("/"),
+      entryPath: result.entryPath,
     };
   } catch (error) {
     return toolError(error, "The item could not be pasted.");
@@ -1260,8 +1188,7 @@ ipcMain.handle("project:paste-entry", async (event, args) => {
 
 ipcMain.handle("project:save-file", async (_event, args) => {
   try {
-    const filePath = resolveProjectFile(args.rootPath, args.filePath);
-    await fs.writeFile(filePath, args.content, "utf8");
+    await atomicSaveProjectFile(args.rootPath, args.filePath, args.content);
     return { success: true, output: "Saved successfully." };
   } catch (error) {
     return toolError(error, "The file could not be saved.");
@@ -1269,19 +1196,47 @@ ipcMain.handle("project:save-file", async (_event, args) => {
 });
 
 ipcMain.handle("project:format-dart", async (_event, args) => {
+  let temporaryDirectory;
   try {
-    await requireTrustedWorkspace(args?.rootPath);
     const filePath = resolveProjectFile(args.rootPath, args.filePath);
     if (path.extname(filePath).toLowerCase() !== ".dart") {
       return { success: false, output: "Dart formatting requires a .dart file." };
     }
-    await fs.writeFile(filePath, args.content, "utf8");
-    const result = await execFileAsync("dart", ["format", filePath], {
-      cwd: path.resolve(args.rootPath),
+    const wslFile = parseWslUncPath(filePath);
+    if (wslFile) {
+      temporaryDirectory = await fs.mkdtemp(
+        path.join(path.dirname(filePath), ".divex-format-"),
+      );
+      const temporaryFile = path.join(temporaryDirectory, "input.dart");
+      await fs.writeFile(temporaryFile, args.content, "utf8");
+      const wslTemporaryFile = parseWslUncPath(temporaryFile);
+      if (!wslTemporaryFile) throw new Error("The WSL format path is invalid.");
+      const result = await runInWsl(
+        args.rootPath,
+        "dart",
+        ["format", wslTemporaryFile.linuxPath],
+        { cwdPath: args.rootPath, timeout: 30_000 },
+      );
+      const content = await fs.readFile(temporaryFile, "utf8");
+      await atomicSaveProjectFile(args.rootPath, args.filePath, content);
+      return {
+        success: true,
+        output: result.stdout || "Dart formatting completed in WSL.",
+        content,
+      };
+    }
+    temporaryDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "divex-format-"),
+    );
+    const temporaryFile = path.join(temporaryDirectory, "input.dart");
+    await fs.writeFile(temporaryFile, args.content, "utf8");
+    const result = await runTool("dart", ["format", "input.dart"], {
+      cwd: temporaryDirectory,
       maxBuffer: 4 * 1024 * 1024,
       timeout: 30000,
     });
-    const content = await fs.readFile(filePath, "utf8");
+    const content = await fs.readFile(temporaryFile, "utf8");
+    await atomicSaveProjectFile(args.rootPath, args.filePath, content);
     return {
       success: true,
       output: result.stdout || "Dart formatting completed.",
@@ -1292,21 +1247,72 @@ ipcMain.handle("project:format-dart", async (_event, args) => {
       error,
       "The Dart SDK was not found. Install Flutter or add dart to PATH.",
     );
+  } finally {
+    if (temporaryDirectory) {
+      await fs.rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  }
+});
+
+ipcMain.handle("editor:list-recovery", async (_event, args) => {
+  try {
+    const entries = await listRecoveries(
+      path.join(app.getPath("userData"), "editor-recovery"),
+      args?.rootPath,
+    );
+    return {
+      success: true,
+      output: entries.length
+        ? `Found ${entries.length} recoverable editor buffer${entries.length === 1 ? "" : "s"}.`
+        : "No editor recovery data found.",
+      entries,
+    };
+  } catch (error) {
+    return { ...toolError(error, "Editor recovery data could not be loaded."), entries: [] };
+  }
+});
+
+ipcMain.handle("editor:write-recovery", async (_event, args) => {
+  try {
+    const entry = await writeRecovery(
+      path.join(app.getPath("userData"), "editor-recovery"),
+      args,
+    );
+    return { success: true, output: "Recovery snapshot saved.", entry };
+  } catch (error) {
+    return toolError(error, "The recovery snapshot could not be saved.");
+  }
+});
+
+ipcMain.handle("editor:clear-recovery", async (_event, args) => {
+  try {
+    await clearRecovery(
+      path.join(app.getPath("userData"), "editor-recovery"),
+      args?.rootPath,
+      args?.filePath,
+    );
+    return { success: true, output: "Recovery snapshot cleared." };
+  } catch (error) {
+    return toolError(error, "The recovery snapshot could not be cleared.");
   }
 });
 
 ipcMain.handle("project:analyze-flutter", async (_event, args) => {
   try {
-    const resolvedRoot = await requireTrustedWorkspace(args?.rootPath);
-    const result = await execFileAsync(
-      "flutter",
-      ["analyze", "--no-pub"],
-      {
-        cwd: resolvedRoot,
-        maxBuffer: 8 * 1024 * 1024,
-        timeout: 120000,
-      },
-    );
+    const resolvedRoot = validateProjectRoot(args.rootPath);
+    await workspaceTrustService.requireTrusted(resolvedRoot);
+    const result = parseWslUncPath(resolvedRoot)
+      ? await runInWsl(
+          resolvedRoot,
+          "flutter",
+          ["analyze", "--no-pub"],
+          { maxBuffer: 8 * 1024 * 1024, timeout: 120_000 },
+        )
+      : await runTool("flutter", ["analyze", "--no-pub"], {
+          cwd: resolvedRoot,
+          maxBuffer: 8 * 1024 * 1024,
+          timeout: 120_000,
+        });
     return {
       success: true,
       output: result.stdout || "No Flutter analysis issues found.",
@@ -1319,68 +1325,57 @@ ipcMain.handle("project:analyze-flutter", async (_event, args) => {
   }
 });
 
-ipcMain.handle("git:status", async (_event, args) => {
-  try {
-    const rootPath = await requireTrustedWorkspace(args?.rootPath);
-    return getGitStatus(rootPath);
-  } catch (error) {
-    return toolError(error, "Git status could not be loaded.");
-  }
-});
+ipcMain.handle("git:status", async (_event, args) =>
+  getGitStatus(args?.rootPath),
+);
 
-ipcMain.handle("git:diff", async (_event, args) => {
-  try {
-    const rootPath = await requireTrustedWorkspace(args?.rootPath);
-    return getGitDiff(rootPath, args?.filePath, Boolean(args?.staged));
-  } catch (error) {
-    return toolError(error, "The Git diff could not be loaded.");
-  }
-});
+ipcMain.handle("git:diff", async (_event, args) =>
+  getGitDiff(args?.rootPath, args?.filePath, Boolean(args?.staged)),
+);
 
-ipcMain.handle("git:stage", async (_event, args) => {
-  try {
-    const rootPath = await requireTrustedWorkspace(args?.rootPath);
-    return mutateGitPath(rootPath, args?.filePath, "stage");
-  } catch (error) {
-    return toolError(error, "The file could not be staged.");
-  }
-});
+ipcMain.handle("git:stage", async (_event, args) =>
+  mutateGitPath(args?.rootPath, args?.filePath, "stage"),
+);
 
-ipcMain.handle("git:unstage", async (_event, args) => {
-  try {
-    const rootPath = await requireTrustedWorkspace(args?.rootPath);
-    return mutateGitPath(rootPath, args?.filePath, "unstage");
-  } catch (error) {
-    return toolError(error, "The file could not be unstaged.");
-  }
-});
+ipcMain.handle("git:unstage", async (_event, args) =>
+  mutateGitPath(args?.rootPath, args?.filePath, "unstage"),
+);
 
-ipcMain.handle("git:stage-all", async (_event, args) => {
-  try {
-    const rootPath = await requireTrustedWorkspace(args?.rootPath);
-    return mutateAllGit(rootPath, "stage");
-  } catch (error) {
-    return toolError(error, "Changes could not be staged.");
-  }
-});
+ipcMain.handle("git:stage-all", async (_event, args) =>
+  mutateAllGit(args?.rootPath, "stage"),
+);
 
-ipcMain.handle("git:unstage-all", async (_event, args) => {
-  try {
-    const rootPath = await requireTrustedWorkspace(args?.rootPath);
-    return mutateAllGit(rootPath, "unstage");
-  } catch (error) {
-    return toolError(error, "Changes could not be unstaged.");
-  }
-});
+ipcMain.handle("git:unstage-all", async (_event, args) =>
+  mutateAllGit(args?.rootPath, "unstage"),
+);
 
-ipcMain.handle("git:commit", async (_event, args) => {
-  try {
-    const rootPath = await requireTrustedWorkspace(args?.rootPath);
-    return commitGit(rootPath, args?.message);
-  } catch (error) {
-    return toolError(error, "The commit could not be created.");
-  }
-});
+ipcMain.handle("git:commit", async (_event, args) =>
+  commitGit(args?.rootPath, args?.message),
+);
+
+ipcMain.handle("git:initialize", async (_event, args) =>
+  initializeRepository(args?.rootPath),
+);
+
+ipcMain.handle("git:change-branch", async (_event, args) =>
+  changeBranch(args?.rootPath, args?.branch, Boolean(args?.create)),
+);
+
+ipcMain.handle("git:sync", async (_event, args) =>
+  syncRepository(args?.rootPath, args?.action),
+);
+
+ipcMain.handle("git:stash", async (_event, args) =>
+  stashChanges(args?.rootPath, args?.action),
+);
+
+ipcMain.handle("git:discard", async (_event, args) =>
+  discardChanges(args?.rootPath, args?.filePath),
+);
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(APP_ID);
+}
 
 app.whenReady().then(() => {
   createWindow();

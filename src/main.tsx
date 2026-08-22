@@ -8,6 +8,11 @@ import {
 import { FeatureErrorBoundary } from "./components/FeatureErrorBoundary";
 import "./styles.css";
 
+const platform =
+  window.divex?.platform ??
+  (navigator.platform.toLowerCase().includes("mac") ? "darwin" : "browser");
+document.documentElement.dataset.platform = platform;
+
 const safeMode =
   new URLSearchParams(window.location.search).get("safeMode") === "1";
 const rendererMode =

@@ -1,5 +1,10 @@
 const crypto = require("node:crypto");
 const path = require("node:path");
+const {
+  isContainedPath,
+  validateProjectRoot,
+} = require("../project/paths.cjs");
+const { wslCommandForProject } = require("../platform/wsl.cjs");
 
 const MAX_SESSIONS_PER_OWNER = 12;
 const MAX_INPUT_LENGTH = 64 * 1024;
@@ -15,10 +20,10 @@ function terminalFailure(error, fallback) {
 }
 
 function validateTerminalRoot(rootPath) {
-  if (typeof rootPath !== "string" || !path.isAbsolute(rootPath)) {
-    throw new Error("Open a local project folder before starting a terminal.");
-  }
-  return path.resolve(rootPath);
+  return validateProjectRoot(
+    rootPath,
+    "Open a project folder before starting a terminal.",
+  );
 }
 
 function resolveTerminalDirectory(rootPath, relativePath) {
@@ -27,10 +32,7 @@ function resolveTerminalDirectory(rootPath, relativePath) {
     throw new Error("The terminal directory must be inside the opened project.");
   }
   const resolvedDirectory = path.resolve(rootPath, relativePath);
-  if (
-    resolvedDirectory !== rootPath &&
-    !resolvedDirectory.startsWith(`${rootPath}${path.sep}`)
-  ) {
+  if (!isContainedPath(rootPath, resolvedDirectory)) {
     throw new Error("The terminal directory is outside the opened project.");
   }
   return resolvedDirectory;
@@ -62,6 +64,8 @@ function publicSession(session) {
     kind: session.kind,
     taskId: session.taskId,
     filePath: session.filePath,
+    profileId: session.profileId,
+    problemMatcher: session.problemMatcher,
     cwd: session.cwd,
     status: session.status,
     exitCode: session.exitCode,
@@ -88,15 +92,24 @@ function createTerminalService({ ptyModule, onEvent } = {}) {
   const create = (options, owner) => {
     try {
       const rootPath = validateTerminalRoot(options?.rootPath);
-      const cwd = resolveTerminalDirectory(rootPath, options?.cwd);
+      const requestedCwd = resolveTerminalDirectory(rootPath, options?.cwd);
       if (sessionsForOwner(owner).length >= MAX_SESSIONS_PER_OWNER) {
         throw new Error(
           `Close a terminal before opening more than ${MAX_SESSIONS_PER_OWNER} sessions.`,
         );
       }
-      const shell = options?.executable
+      const nativeShell = options?.executable
         ? { executable: options.executable, args: options.args ?? [] }
         : defaultShell();
+      const wslShell = wslCommandForProject(
+        rootPath,
+        options?.executable,
+        options?.args ?? [],
+        requestedCwd,
+      );
+      const shell = wslShell ?? nativeShell;
+      const cwd = wslShell?.hostCwd ?? requestedCwd;
+      const displayCwd = wslShell?.displayCwd ?? requestedCwd;
       if (
         typeof shell.executable !== "string" ||
         !Array.isArray(shell.args) ||
@@ -109,7 +122,7 @@ function createTerminalService({ ptyModule, onEvent } = {}) {
         name: "xterm-256color",
         cols: boundedDimension(options?.cols, 100, 500),
         rows: boundedDimension(options?.rows, 28, 200),
-        cwd,
+        cwd: displayCwd,
         env: {
           ...process.env,
           TERM: "xterm-256color",
@@ -124,6 +137,8 @@ function createTerminalService({ ptyModule, onEvent } = {}) {
         kind: options?.kind || "shell",
         taskId: options?.taskId,
         filePath: options?.filePath,
+        profileId: options?.profileId,
+        problemMatcher: options?.problemMatcher,
         cwd,
         status: "running",
         exitCode: undefined,

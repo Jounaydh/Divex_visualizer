@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { loadProject } = require("./project-loader.cjs") as {
+const { loadProject } = require("./loader.cjs") as {
   loadProject: (
     rootPath: string,
     onProgress?: (progress: {
@@ -21,6 +21,7 @@ const { loadProject } = require("./project-loader.cjs") as {
     }) => void,
   ) => Promise<{
     files: Array<{ path: string; content: string }>;
+    folders: string[];
     loadSummary: {
       totalFiles: number;
       cachedFiles: number;
@@ -43,6 +44,7 @@ async function createProject() {
   const rootPath = await mkdtemp(join(tmpdir(), "divex-loader-"));
   temporaryProjects.push(rootPath);
   await mkdir(join(rootPath, "lib"), { recursive: true });
+  await mkdir(join(rootPath, "empty"), { recursive: true });
   await mkdir(join(rootPath, "node_modules", "ignored"), {
     recursive: true,
   });
@@ -60,6 +62,16 @@ async function createProject() {
 }
 
 describe("project loader", () => {
+  it("loads TypeScript and TSX source files", async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), "divex-typescript-loader-"));
+    temporaryProjects.push(rootPath);
+    await mkdir(join(rootPath, "src"));
+    await writeFile(join(rootPath, "src", "main.ts"), "export const main = (): void => {};\n");
+    await writeFile(join(rootPath, "src", "App.tsx"), "export const App = () => <main />;\n");
+    const project = await loadProject(rootPath);
+    expect(project.files.map((file) => file.path)).toEqual(["src/App.tsx", "src/main.ts"]);
+  });
+
   it("scans metadata, ignores dependency folders, and reports progress", async () => {
     const rootPath = await createProject();
     const phases: string[] = [];
@@ -72,6 +84,7 @@ describe("project loader", () => {
       "lib/a.dart",
       "lib/b.dart",
     ]);
+    expect(project.folders).toEqual(expect.arrayContaining(["empty", "lib"]));
     expect(project.loadSummary).toMatchObject({
       totalFiles: 3,
       cachedFiles: 0,

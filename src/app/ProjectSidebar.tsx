@@ -1,10 +1,15 @@
 import {
   Box,
+  Bug,
   ChevronDown,
   Files,
   FolderOpen,
   GitBranch,
+  Laptop,
   ScanSearch,
+  Settings2,
+  ShieldCheck,
+  ShieldQuestion,
 } from "lucide-react";
 import {
   FileExplorer,
@@ -16,25 +21,43 @@ import type {
   FolderNode,
 } from "../types";
 import { SourceControlPanel } from "../features/source-control/SourceControlPanel";
+import { DebugPanel } from "../features/debugger/DebugPanel";
+import type { DebuggerManager } from "../features/debugger/useDebugger";
+import type { DebugStackFrame } from "../types";
 
-export type SidebarView = "explorer" | "source-control";
+export type SidebarView = "explorer" | "source-control" | "debugger";
 
 interface ProjectSidebarProps {
   project: AnalyzedProject;
   activeView: SidebarView;
   selectedId: string | null;
+  selectedFile: AnalyzedFile | null;
+  debuggerManager: DebuggerManager;
+  workspaceTrusted: boolean;
   canUseNativePaths: boolean;
-  canExecuteProject: boolean;
   canShare: boolean;
   hasClipboard: boolean;
   projectMenuOpen: boolean;
   gitRefreshKey: number;
+  newFileExtension: string;
+  gitAutoRefresh: boolean;
+  confirmGitDiscard: boolean;
   onChangeView: (view: SidebarView) => void;
   onToggleProjectMenu: () => void;
   onOpenProject: () => void;
+  onOpenWslProject: () => void;
   onLoadDemo: () => void;
+  onOpenProjectSettings: () => void;
+  onOpenWorkspaceTrust: () => void;
   onSelectFile: (file: AnalyzedFile) => void;
   onSelectFolder: (folder: FolderNode) => void;
+  onCreateEntry: (
+    parentPath: string,
+    kind: ExplorerEntry["kind"],
+    name: string,
+  ) => void;
+  onDuplicateEntry: (entry: ExplorerEntry) => void;
+  onMoveEntry: (source: ExplorerEntry, target: ExplorerEntry) => void;
   onRenameEntry: (entry: ExplorerEntry, newName: string) => void;
   onDeleteEntry: (entry: ExplorerEntry) => void;
   onCopyEntryPath: (entry: ExplorerEntry, relative: boolean) => void;
@@ -47,25 +70,37 @@ interface ProjectSidebarProps {
   onCopyEntry: (entry: ExplorerEntry) => void;
   onPasteEntry: (entry: ExplorerEntry) => void;
   onOpenGitFile: (path: string) => void;
-  onTrustWorkspace: () => void;
+  onGitRepositoryChanged: () => void;
+  onOpenDebugFrame: (frame: DebugStackFrame) => void;
 }
 
 export function ProjectSidebar({
   project,
   activeView,
   selectedId,
+  selectedFile,
+  debuggerManager,
+  workspaceTrusted,
   canUseNativePaths,
-  canExecuteProject,
   canShare,
   hasClipboard,
   projectMenuOpen,
   gitRefreshKey,
+  newFileExtension,
+  gitAutoRefresh,
+  confirmGitDiscard,
   onChangeView,
   onToggleProjectMenu,
   onOpenProject,
+  onOpenWslProject,
   onLoadDemo,
+  onOpenProjectSettings,
+  onOpenWorkspaceTrust,
   onSelectFile,
   onSelectFolder,
+  onCreateEntry,
+  onDuplicateEntry,
+  onMoveEntry,
   onRenameEntry,
   onDeleteEntry,
   onCopyEntryPath,
@@ -78,7 +113,8 @@ export function ProjectSidebar({
   onCopyEntry,
   onPasteEntry,
   onOpenGitFile,
-  onTrustWorkspace,
+  onGitRepositoryChanged,
+  onOpenDebugFrame,
 }: ProjectSidebarProps) {
   const symbolCount = project.files.reduce(
     (total, file) => total + file.symbols.length,
@@ -106,6 +142,15 @@ export function ProjectSidebar({
           <GitBranch size={14} />
           Source Control
         </button>
+        <button
+          type="button"
+          className={activeView === "debugger" ? "active" : ""}
+          title="Run and Debug (Ctrl+Shift+D)"
+          onClick={() => onChangeView("debugger")}
+        >
+          <Bug size={14} />
+          Debug
+        </button>
       </div>
       <div className="project-switcher">
         <button
@@ -118,7 +163,13 @@ export function ProjectSidebar({
           </span>
           <span>
             <strong>{project.name}</strong>
-            <small>Flutter project</small>
+            <small>
+              {project.languageSummary} project
+              {project.environment?.kind === "wsl"
+                ? ` · WSL ${project.environment.distribution}`
+                : ""}
+              {!workspaceTrusted && canUseNativePaths ? " · Restricted" : ""}
+            </small>
           </span>
           <ChevronDown size={14} />
         </button>
@@ -128,10 +179,30 @@ export function ProjectSidebar({
               <FolderOpen size={15} />
               Open project folder…
             </button>
+            {window.divex?.platform === "win32" && (
+              <button type="button" onClick={onOpenWslProject}>
+                <Laptop size={15} />
+                Open WSL project…
+              </button>
+            )}
             <button type="button" onClick={onLoadDemo}>
               <ScanSearch size={15} />
               Load demo project
             </button>
+            <button type="button" onClick={onOpenProjectSettings}>
+              <Settings2 size={15} />
+              Project settings…
+            </button>
+            {canUseNativePaths && (
+              <button type="button" onClick={onOpenWorkspaceTrust}>
+                {workspaceTrusted ? (
+                  <ShieldCheck size={15} />
+                ) : (
+                  <ShieldQuestion size={15} />
+                )}
+                Workspace trust…
+              </button>
+            )}
           </div>
         )}
         <button
@@ -154,11 +225,15 @@ export function ProjectSidebar({
             root={project.root}
             selectedId={selectedId}
             canUseNativePaths={canUseNativePaths}
-            canExecuteProject={canExecuteProject}
+            executionEnabled={workspaceTrusted}
             canShare={canShare}
             hasClipboard={hasClipboard}
+            newFileExtension={newFileExtension}
             onSelectFile={onSelectFile}
             onSelectFolder={onSelectFolder}
+            onCreateEntry={onCreateEntry}
+            onDuplicateEntry={onDuplicateEntry}
+            onMoveEntry={onMoveEntry}
             onRenameEntry={onRenameEntry}
             onDeleteEntry={onDeleteEntry}
             onCopyEntryPath={onCopyEntryPath}
@@ -187,14 +262,21 @@ export function ProjectSidebar({
             </div>
           </div>
         </>
-      ) : (
+      ) : activeView === "source-control" ? (
         <SourceControlPanel
           rootPath={project.rootPath}
           enabled={canUseNativePaths}
-          trusted={canExecuteProject}
           refreshKey={gitRefreshKey}
+          autoRefreshOnFocus={gitAutoRefresh}
+          confirmDestructiveActions={confirmGitDiscard}
           onOpenFile={onOpenGitFile}
-          onTrustWorkspace={onTrustWorkspace}
+          onRepositoryChanged={onGitRepositoryChanged}
+        />
+      ) : (
+        <DebugPanel
+          manager={debuggerManager}
+          selectedFile={selectedFile}
+          onOpenFrame={onOpenDebugFrame}
         />
       )}
     </aside>

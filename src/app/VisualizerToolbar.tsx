@@ -182,7 +182,7 @@ export function VisualizerToolbar({
       <div className="canvas-context">
         <span>
           {showCode
-            ? "Flutter code editor"
+            ? "Source code editor"
             : viewMode === "logic"
               ? "Logical code workflow"
               : "Workflow map"}

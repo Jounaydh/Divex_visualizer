@@ -1,10 +1,11 @@
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const {
   createProjectWatcherService,
   shouldRefreshProject,
-} = require("./project-watcher.cjs") as {
+} = require("./watcher.cjs") as {
   createProjectWatcherService: (options: {
     debounceMs: number;
     createWatcher: (
@@ -32,7 +33,8 @@ describe("project watcher", () => {
   it("filters generated folders and unsupported files", () => {
     expect(shouldRefreshProject("lib/main.dart")).toBe(true);
     expect(shouldRefreshProject("src/App.java")).toBe(true);
-    expect(shouldRefreshProject("database/schema.sql")).toBe(true);
+    expect(shouldRefreshProject("src/App.tsx")).toBe(true);
+    expect(shouldRefreshProject("src/new-folder")).toBe(true);
     expect(shouldRefreshProject("build/generated.dart")).toBe(false);
     expect(shouldRefreshProject("README.md")).toBe(false);
   });
@@ -53,7 +55,8 @@ describe("project watcher", () => {
       },
     });
 
-    service.start(owner, "/tmp/divex-project");
+    const rootPath = resolve("/tmp/divex-project");
+    service.start(owner, rootPath);
     onChange?.("change", "lib/main.dart");
     onChange?.("change", "lib/app.dart");
     await vi.advanceTimersByTimeAsync(25);
@@ -62,7 +65,7 @@ describe("project watcher", () => {
     expect(owner.send).toHaveBeenCalledWith(
       "project:changed",
       expect.objectContaining({
-        rootPath: "/tmp/divex-project",
+        rootPath,
         paths: ["lib/app.dart", "lib/main.dart"],
       }),
     );

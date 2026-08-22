@@ -13,7 +13,7 @@ const describeSymbol = (kind: CodeSymbol["kind"], name: string) => {
 export function extractDartImportLinks(content: string) {
   const lines = content.split("\n");
   return lines.flatMap((lineContent, index) => {
-    const match = lineContent.match(/^\s*import\s+['"]([^'"]+)['"]/);
+    const match = lineContent.match(/^\s*(?:import|export|part)\s+['"]([^'"]+)['"]/);
     if (!match) return [];
     const value = match[1];
     const valueIndex = lineContent.indexOf(value);
@@ -282,9 +282,9 @@ export function extractDartRelationships(
               targetFile,
               {
                 startLine: target.line,
-                startColumn: target.column,
+                startColumn: target.column ?? 1,
                 endLine: target.endLine,
-                endColumn: target.endColumn,
+                endColumn: target.endColumn ?? 1,
               },
               target.id,
             )

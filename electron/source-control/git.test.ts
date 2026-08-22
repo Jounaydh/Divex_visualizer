@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,10 +11,13 @@ const execFileAsync = promisify(execFile);
 const {
   getGitDiff,
   getGitStatus,
+  changeBranch,
+  discardChanges,
   mutatePath,
   parsePorcelainStatus,
+  validateBranchName,
   validateRelativePath,
-} = require("./git-service.cjs") as {
+} = require("./git.cjs") as {
   getGitDiff: (
     rootPath: string,
     filePath: string,
@@ -29,12 +32,23 @@ const {
         staged: boolean;
         unstaged: boolean;
       }>;
+      branch: string;
+      branches: string[];
     };
   }>;
   mutatePath: (
     rootPath: string,
     filePath: string,
     action: "stage" | "unstage",
+  ) => Promise<{ success: boolean }>;
+  changeBranch: (
+    rootPath: string,
+    branch: string,
+    create?: boolean,
+  ) => Promise<{ success: boolean }>;
+  discardChanges: (
+    rootPath: string,
+    filePath?: string,
   ) => Promise<{ success: boolean }>;
   parsePorcelainStatus: (output: string) => Array<{
     path: string;
@@ -44,6 +58,7 @@ const {
     untracked: boolean;
   }>;
   validateRelativePath: (rootPath: string, filePath: string) => string;
+  validateBranchName: (name: string) => string;
 };
 
 const temporaryRepositories: string[] = [];
@@ -112,6 +127,14 @@ describe("Git service", () => {
     );
   });
 
+  it("validates branch names before passing them to Git", () => {
+    expect(validateBranchName("feature/project-settings")).toBe(
+      "feature/project-settings",
+    );
+    expect(() => validateBranchName("-force-option")).toThrow("valid Git branch");
+    expect(() => validateBranchName("bad..branch")).toThrow("valid Git branch");
+  });
+
   it("reads, stages, and unstages repository changes", async () => {
     const rootPath = await createRepository();
     await writeFile(
@@ -147,6 +170,40 @@ describe("Git service", () => {
     expect((await getGitStatus(rootPath)).status.entries[0]).toMatchObject({
       staged: false,
       unstaged: true,
+    });
+  });
+
+  it("creates and switches branches through constrained arguments", async () => {
+    const rootPath = await createRepository();
+    expect(await changeBranch(rootPath, "feature/settings", true)).toMatchObject({
+      success: true,
+    });
+    const status = await getGitStatus(rootPath);
+    expect(status.status.branch).toBe("feature/settings");
+    expect(status.status.branches).toEqual(
+      expect.arrayContaining(["feature/settings"]),
+    );
+  });
+
+  it("discards a selected tracked or untracked working change", async () => {
+    const rootPath = await createRepository();
+    await writeFile(join(rootPath, "main.dart"), "changed\n");
+    expect(await discardChanges(rootPath, "main.dart")).toMatchObject({
+      success: true,
+    });
+    expect(
+      (await readFile(join(rootPath, "main.dart"), "utf8")).replaceAll(
+        "\r\n",
+        "\n",
+      ),
+    ).toBe("void main() {}\n");
+
+    await writeFile(join(rootPath, "temporary.txt"), "temporary\n");
+    expect(await discardChanges(rootPath, "temporary.txt")).toMatchObject({
+      success: true,
+    });
+    await expect(readFile(join(rootPath, "temporary.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
     });
   });
 });

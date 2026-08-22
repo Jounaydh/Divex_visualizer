@@ -41,6 +41,7 @@ import {
   type LogicalViewport,
 } from "./logicalWorkflowPerformance";
 import { WorkflowNode } from "../../components/WorkflowNode";
+import { useAnchoredZoom } from "../viewport/useAnchoredZoom";
 import { RelationshipEvidenceCard } from "./RelationshipEvidenceCard";
 
 interface LogicalWorkflowVisualizerProps {
@@ -104,7 +105,6 @@ export function LogicalWorkflowVisualizer({
   });
   const scrollRef = useRef<HTMLDivElement>(null);
   const viewportFrameRef = useRef<number | null>(null);
-  const zoomRef = useRef(zoom);
   const customPositionsRef = useRef(customPositions);
   const positionsRef = useRef<ReadonlyMap<string, WorkflowPosition>>(
     new Map(),
@@ -252,8 +252,19 @@ export function LogicalWorkflowVisualizer({
     [edgeRoutes, renderedEdges, viewport],
   );
 
+  const {
+    zoomRef,
+    changeZoom,
+    changeZoomByStep,
+    handleControlWheel,
+  } = useAnchoredZoom({
+    scrollRef,
+    zoom,
+    minZoom: MIN_ZOOM,
+    maxZoom: MAX_ZOOM,
+    onZoomChange,
+  });
   positionsRef.current = positions;
-  zoomRef.current = zoom;
 
   const focusNode = useCallback(
     (nodeId: string, behavior: ScrollBehavior = "smooth") => {
@@ -323,18 +334,7 @@ export function LogicalWorkflowVisualizer({
       });
     };
     const handleWheel = (event: WheelEvent) => {
-      if (event.ctrlKey) {
-        event.preventDefault();
-        const delta =
-          event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
-            ? event.deltaY
-            : event.deltaY * 16;
-        const nextZoom = Math.min(
-          MAX_ZOOM,
-          Math.max(MIN_ZOOM, zoomRef.current * Math.exp(-delta * 0.01)),
-        );
-        zoomRef.current = nextZoom;
-        onZoomChange(nextZoom);
+      if (handleControlWheel(event)) {
         updateViewport();
       } else if (event.shiftKey && Math.abs(event.deltaX) < 0.01) {
         event.preventDefault();
@@ -355,13 +355,7 @@ export function LogicalWorkflowVisualizer({
         viewportFrameRef.current = null;
       }
     };
-  }, [onZoomChange]);
-
-  const changeZoom = (value: number) => {
-    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
-    zoomRef.current = next;
-    onZoomChange(next);
-  };
+  }, [handleControlWheel]);
 
   const updatePosition = (
     nodeId: string,
@@ -375,15 +369,6 @@ export function LogicalWorkflowVisualizer({
     onCustomPositionsChange(next);
   };
 
-  const toggleKind = (kind: LogicalEdgeKind) => {
-    setVisibleKinds((current) => {
-      const next = new Set(current);
-      if (next.has(kind)) next.delete(kind);
-      else next.add(kind);
-      return next;
-    });
-  };
-
   const focusEvidenceNode = (nodeId: string) => {
     const node = nodeById.get(nodeId);
     if (node) onSelectNode(node);
@@ -392,6 +377,15 @@ export function LogicalWorkflowVisualizer({
 
   const selectEvidenceEdge = (edge: VisualEdge) => {
     setSelectedEdgeId(edge.id);
+  };
+
+  const toggleKind = (kind: LogicalEdgeKind) => {
+    setVisibleKinds((current) => {
+      const next = new Set(current);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
   };
 
   return (
@@ -640,7 +634,7 @@ export function LogicalWorkflowVisualizer({
         <button
           type="button"
           aria-label="Zoom out"
-          onClick={() => changeZoom(zoom - 0.1)}
+          onClick={() => changeZoomByStep(-1)}
         >
           <Minus size={14} />
         </button>
@@ -655,7 +649,7 @@ export function LogicalWorkflowVisualizer({
         <button
           type="button"
           aria-label="Zoom in"
-          onClick={() => changeZoom(zoom + 0.1)}
+          onClick={() => changeZoomByStep(1)}
         >
           <Plus size={14} />
         </button>

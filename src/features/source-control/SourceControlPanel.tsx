@@ -1,17 +1,20 @@
 import {
   AlertTriangle,
+  Archive,
   Check,
   ChevronDown,
   ChevronRight,
+  Download,
   FileDiff,
   GitBranch,
   Minus,
   Plus,
   RefreshCw,
-  ShieldAlert,
+  Undo2,
+  Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   GitDiffResult,
   GitFileStatus,
@@ -22,10 +25,11 @@ import type {
 interface SourceControlPanelProps {
   rootPath: string;
   enabled: boolean;
-  trusted: boolean;
   refreshKey: number;
+  autoRefreshOnFocus: boolean;
+  confirmDestructiveActions: boolean;
   onOpenFile: (path: string) => void;
-  onTrustWorkspace: () => void;
+  onRepositoryChanged: () => void;
 }
 
 interface DiffSelection {
@@ -48,6 +52,7 @@ function FileStatusRow({
   onOpenFile,
   onOpenDiff,
   onToggleStage,
+  onDiscard,
 }: {
   entry: GitFileStatus;
   staged: boolean;
@@ -55,6 +60,7 @@ function FileStatusRow({
   onOpenFile: () => void;
   onOpenDiff: () => void;
   onToggleStage: () => void;
+  onDiscard: () => void;
 }) {
   const separator = Math.max(
     entry.path.lastIndexOf("/"),
@@ -74,6 +80,18 @@ function FileStatusRow({
         <span>{name}</span>
         {directory && <small>{directory}</small>}
       </button>
+      {!staged && (
+        <button
+          type="button"
+          className="git-row-action danger"
+          aria-label={`Discard changes in ${entry.path}`}
+          title="Discard working changes"
+          disabled={busy}
+          onClick={onDiscard}
+        >
+          <Undo2 size={13} />
+        </button>
+      )}
       <button
         type="button"
         className="git-row-action"
@@ -112,6 +130,8 @@ function ChangeGroup({
   onOpenDiff,
   onToggleStage,
   onToggleAll,
+  onDiscard,
+  onDiscardAll,
 }: {
   title: string;
   entries: GitFileStatus[];
@@ -121,6 +141,8 @@ function ChangeGroup({
   onOpenDiff: (entry: GitFileStatus, staged: boolean) => void;
   onToggleStage: (entry: GitFileStatus, staged: boolean) => void;
   onToggleAll: (staged: boolean) => void;
+  onDiscard: (entry: GitFileStatus) => void;
+  onDiscardAll: () => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   if (entries.length === 0) return null;
@@ -133,15 +155,28 @@ function ChangeGroup({
           <span>{title}</span>
           <small>{entries.length}</small>
         </button>
-        <button
-          type="button"
-          className="git-group-action"
-          aria-label={staged ? "Unstage all changes" : "Stage all changes"}
-          title={staged ? "Unstage all" : "Stage all"}
-          onClick={() => onToggleAll(staged)}
-        >
-          {staged ? <Minus size={13} /> : <Plus size={13} />}
-        </button>
+        <span className="git-group-actions">
+          {!staged && (
+            <button
+              type="button"
+              className="git-group-action danger"
+              aria-label="Discard all working changes"
+              title="Discard all unstaged and untracked changes"
+              onClick={onDiscardAll}
+            >
+              <Undo2 size={13} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="git-group-action"
+            aria-label={staged ? "Unstage all changes" : "Stage all changes"}
+            title={staged ? "Unstage all" : "Stage all"}
+            onClick={() => onToggleAll(staged)}
+          >
+            {staged ? <Minus size={13} /> : <Plus size={13} />}
+          </button>
+        </span>
       </div>
       {expanded &&
         entries.map((entry) => (
@@ -153,6 +188,7 @@ function ChangeGroup({
             onOpenFile={() => onOpenFile(entry.path)}
             onOpenDiff={() => onOpenDiff(entry, staged)}
             onToggleStage={() => onToggleStage(entry, staged)}
+            onDiscard={() => onDiscard(entry)}
           />
         ))}
     </section>
@@ -162,10 +198,11 @@ function ChangeGroup({
 export function SourceControlPanel({
   rootPath,
   enabled,
-  trusted,
   refreshKey,
+  autoRefreshOnFocus,
+  confirmDestructiveActions,
   onOpenFile,
-  onTrustWorkspace,
+  onRepositoryChanged,
 }: SourceControlPanelProps) {
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -173,9 +210,12 @@ export function SourceControlPanel({
   const [commitMessage, setCommitMessage] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [diff, setDiff] = useState<DiffSelection | null>(null);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [newBranch, setNewBranch] = useState("");
+  const branchMenuRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
-    if (!enabled || !trusted || !window.divex) {
+    if (!enabled || !window.divex) {
       setStatus(null);
       return;
     }
@@ -191,17 +231,44 @@ export function SourceControlPanel({
     } finally {
       setLoading(false);
     }
-  }, [enabled, rootPath, trusted]);
+  }, [enabled, rootPath]);
 
   useEffect(() => {
     void refresh();
   }, [refresh, refreshKey]);
 
   useEffect(() => {
+    setBranchMenuOpen(false);
+    setNewBranch("");
+  }, [rootPath]);
+
+  useEffect(() => {
+    if (!branchMenuOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !branchMenuRef.current?.contains(event.target)
+      ) {
+        setBranchMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setBranchMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [branchMenuOpen]);
+
+  useEffect(() => {
+    if (!autoRefreshOnFocus) return;
     const refreshOnFocus = () => void refresh();
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
-  }, [refresh]);
+  }, [autoRefreshOnFocus, refresh]);
 
   const stagedEntries = useMemo(
     () => status?.entries.filter((entry) => entry.staged) ?? [],
@@ -287,27 +354,58 @@ export function SourceControlPanel({
     if (succeeded) setCommitMessage("");
   };
 
+  const initializeRepository = async () => {
+    if (!window.divex) return;
+    await runMutation(() => window.divex!.initializeGitRepository({ rootPath }));
+  };
+
+  const changeBranch = async (branch: string, create = false) => {
+    if (!window.divex) return;
+    const succeeded = await runMutation(() =>
+      window.divex!.changeGitBranch({ rootPath, branch, create }),
+    );
+    if (succeeded) {
+      setBranchMenuOpen(false);
+      setNewBranch("");
+      onRepositoryChanged();
+    }
+  };
+
+  const sync = async (action: "fetch" | "pull" | "push") => {
+    if (!window.divex) return;
+    const succeeded = await runMutation(() =>
+      window.divex!.syncGitRepository({ rootPath, action }),
+    );
+    if (succeeded && action === "pull") onRepositoryChanged();
+  };
+
+  const stash = async (action: "save" | "pop") => {
+    if (!window.divex) return;
+    const succeeded = await runMutation(() =>
+      window.divex!.stashGitChanges({ rootPath, action }),
+    );
+    if (succeeded) onRepositoryChanged();
+  };
+
+  const discard = async (entry?: GitFileStatus) => {
+    if (!window.divex) return;
+    const description = entry
+      ? `Discard working changes in “${entry.path}”? This cannot be undone.`
+      : "Discard all unstaged and untracked changes? This cannot be undone.";
+    if (confirmDestructiveActions && !window.confirm(description)) return;
+    const succeeded = await runMutation(
+      () => window.divex!.discardGitChanges({ rootPath, filePath: entry?.path }),
+      entry?.path ?? null,
+    );
+    if (succeeded) onRepositoryChanged();
+  };
+
   if (!enabled) {
     return (
       <div className="git-empty-state">
         <GitBranch size={24} />
-        <strong>Open a local folder</strong>
+        <strong>Open a project folder</strong>
         <span>Source control is available for projects on this computer.</span>
-      </div>
-    );
-  }
-
-  if (!trusted) {
-    return (
-      <div className="git-empty-state">
-        <ShieldAlert size={24} />
-        <strong>Source control is restricted</strong>
-        <span>
-          Trust this folder before Divex runs Git commands or project tools.
-        </span>
-        <button type="button" onClick={onTrustWorkspace}>
-          Trust this folder
-        </button>
       </div>
     );
   }
@@ -327,6 +425,9 @@ export function SourceControlPanel({
         <GitBranch size={24} />
         <strong>No Git repository found</strong>
         <span>{notice ?? "Open a folder that already contains a Git repository."}</span>
+        <button type="button" onClick={() => void initializeRepository()}>
+          Initialize repository
+        </button>
         <button type="button" onClick={() => void refresh()}>
           Try again
         </button>
@@ -337,10 +438,56 @@ export function SourceControlPanel({
   return (
     <div className="source-control-panel">
       <div className="git-branch-row">
-        <span title={status.repositoryRoot}>
-          <GitBranch size={13} />
-          <strong>{status.detached ? `Detached ${status.branch}` : status.branch}</strong>
-        </span>
+        <div className="git-branch-switcher" ref={branchMenuRef}>
+          <button
+            type="button"
+            className="git-current-branch"
+            title={status.repositoryRoot}
+            aria-expanded={branchMenuOpen}
+            onClick={() => setBranchMenuOpen((value) => !value)}
+          >
+            <GitBranch size={13} />
+            <strong>{status.detached ? `Detached ${status.branch}` : status.branch}</strong>
+            <ChevronDown size={11} />
+          </button>
+          {branchMenuOpen && (
+            <div className="git-branch-menu">
+              <strong>Switch branch</strong>
+              <div className="git-branch-list">
+                {(status.branches ?? []).map((branch) => (
+                  <button
+                    type="button"
+                    className={branch === status.branch ? "active" : ""}
+                    key={branch}
+                    disabled={branch === status.branch || busyPath !== null}
+                    onClick={() => void changeBranch(branch)}
+                  >
+                    <GitBranch size={12} />
+                    <span>{branch}</span>
+                    {branch === status.branch && <Check size={11} />}
+                  </button>
+                ))}
+              </div>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (newBranch.trim()) void changeBranch(newBranch, true);
+                }}
+              >
+                <input
+                  value={newBranch}
+                  aria-label="New branch name"
+                  placeholder="new-branch-name"
+                  onChange={(event) => setNewBranch(event.target.value)}
+                />
+                <button type="submit" disabled={!newBranch.trim() || busyPath !== null}>
+                  <Plus size={12} />
+                  Create
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
         {(status.ahead > 0 || status.behind > 0) && (
           <small>
             {status.ahead > 0 ? `↑${status.ahead}` : ""}
@@ -358,11 +505,33 @@ export function SourceControlPanel({
         </button>
       </div>
 
+      <div className="git-workflow-bar" aria-label="Git repository actions">
+        <button type="button" disabled={busyPath !== null || !(status.remotes ?? []).length} onClick={() => void sync("fetch")}>
+          <RefreshCw size={12} /> Fetch
+        </button>
+        <button type="button" disabled={busyPath !== null || !(status.remotes ?? []).length} onClick={() => void sync("pull")}>
+          <Download size={12} /> Pull
+        </button>
+        <button type="button" disabled={busyPath !== null || !(status.remotes ?? []).length} onClick={() => void sync("push")}>
+          <Upload size={12} /> Push
+        </button>
+        <button type="button" disabled={busyPath !== null || status.entries.length === 0} onClick={() => void stash("save")}>
+          <Archive size={12} /> Stash
+        </button>
+        <button type="button" disabled={busyPath !== null} onClick={() => void stash("pop")}>
+          <Undo2 size={12} /> Pop
+        </button>
+      </div>
+
       <div className="git-commit-box">
         <textarea
           value={commitMessage}
           maxLength={500}
-          placeholder="Message (⌘Enter to commit)"
+          placeholder={
+            window.divex?.platform === "darwin"
+              ? "Message (⌘Enter to commit)"
+              : "Message (Ctrl+Enter to commit)"
+          }
           aria-label="Git commit message"
           onChange={(event) => setCommitMessage(event.target.value)}
           onKeyDown={(event) => {
@@ -421,6 +590,8 @@ export function SourceControlPanel({
               onOpenDiff={openDiff}
               onToggleStage={(entry, staged) => void toggleStage(entry, staged)}
               onToggleAll={(staged) => void toggleAll(staged)}
+              onDiscard={(entry) => void discard(entry)}
+              onDiscardAll={() => void discard()}
             />
             <ChangeGroup
               title="CHANGES"
@@ -431,6 +602,8 @@ export function SourceControlPanel({
               onOpenDiff={openDiff}
               onToggleStage={(entry, staged) => void toggleStage(entry, staged)}
               onToggleAll={(staged) => void toggleAll(staged)}
+              onDiscard={(entry) => void discard(entry)}
+              onDiscardAll={() => void discard()}
             />
           </>
         )}

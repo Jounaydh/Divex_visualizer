@@ -9,7 +9,7 @@ npm run check
 ```
 
 This runs containment tests, strict TypeScript validation, and a production
-Vite build.
+Vite build. It also runs the seven-language integration verification.
 For faster iteration:
 
 ```bash
@@ -17,6 +17,24 @@ npm run typecheck
 npm run test
 npm run build
 ```
+
+On Windows with WSL installed, also run:
+
+```powershell
+npm run test:windows
+npm run test:wsl
+```
+
+The native Windows smoke test uses a disposable project to verify loading,
+task detection, Git status, atomic editing, file watching, the real integrated
+terminal, and a Python debug session with a breakpoint, call stack, scopes,
+variables, and Continue. It also confirms this checkout is on the intended
+Windows branch. Install `debugpy` first if the app has not already offered to
+set it up: `py -3 -m pip install --user debugpy`.
+
+The WSL smoke test verifies a real temporary Linux project: loading, Python
+task discovery, Linux Git, file editing, and live change detection. It removes
+only its validated `/tmp/divex-wsl-smoke.*` directory afterward.
 
 Also verify:
 
@@ -35,12 +53,12 @@ After `npm run build`:
 - `dist/index.html` should load the normal entry and stable vendor chunks.
 - The logic-map feature should be emitted as a dynamic chunk.
 - `MiniApp` should be emitted as a small dynamic chunk and should not include
-  Monaco, Xterm, or source-control code.
+  Ace, Xterm, or source-control code.
 - The editor UI and `editor-engine` should be emitted as dynamic chunks.
 - The production HTML should not preload the editor engine.
-- No initial chunk should unexpectedly absorb Monaco or retired 3D libraries.
+- No chunk should unexpectedly absorb all Ace modes or retired 3D libraries.
 
-Monaco is intentionally large but optional. A warning about the editor engine is
+Ace is intentionally large but optional. A warning about the editor engine is
 acceptable while its raw chunk remains lazy.
 
 ## Desktop smoke test
@@ -55,7 +73,8 @@ Check:
 
 1. The built-in Flutter project appears without an error.
 2. **File → Open Folder…** opens the native picker.
-3. Explorer folders expand and collapse.
+   On Windows, **File → Open WSL Folder…** should also open the detected Linux
+   distribution and show its WSL label on the selected project.
 4. A file selection opens its inspector details and symbol list.
 5. The 2D map is the default tab.
 6. Double-clicking map folders/files expands or collapses their children.
@@ -112,8 +131,8 @@ Check:
 49. Find, replace, undo, redo, breadcrumbs, and symbol navigation operate on
     the active document.
 50. Font size, wrap, whitespace, and tab-size settings apply across open tabs.
-51. Flutter Analyze saves dirty buffers first and adds matching Monaco markers
-    and a status-bar problem count.
+51. Flutter Analyze saves dirty buffers first and adds matching gutter
+    annotations and a status-bar problem count.
 52. **File → Open Divex Mini** opens a separate 720 × 520 companion window.
 53. Resize Mini to 420 × 320 and confirm its map tabs, search, live control,
     pin control, zoom controls, and status remain reachable.
@@ -127,30 +146,122 @@ Check:
     in the associated external editor.
 59. Toggle always-on-top, close Mini, reopen it, and confirm its pin state,
     position, size, selected map, and live preference are restored.
-
-## Workspace-trust checks
-
-1. Open a folder that has never been trusted and confirm the Restricted Mode
-   banner appears.
-2. Confirm maps, search, source viewing/editing, reveal, copy, and Mini work.
-3. Confirm terminal, task, active-file run, external open, Git, Dart format, and
-   Flutter analysis controls are unavailable.
-4. Invoke a protected preload method from DevTools and confirm Electron still
-   returns a Restricted Mode error.
-5. Trust the folder from the banner or File menu, accept the warning, and
-   confirm protected tools become available.
-6. Restart Divex and confirm trust persists for that exact folder.
-7. Open a sibling or child folder and confirm it remains restricted.
-8. Revoke trust while a terminal is running and confirm the session closes and
-   protected tools become unavailable immediately.
-
-## Packaged-application checks
-
-Run `npm run package` for an unpacked current-platform smoke test. Before a
-public release, run the native installer command on each target OS and follow
-the complete checklist in [Distribution](DISTRIBUTION.md). Confirm the app icon,
-editor, maps, Mini, terminal native binary, trust persistence, and uninstall
-behavior from an installed build.
+60. Create a root file and a nested empty folder from the Explorer toolbar and
+    context menu; both appear without reopening the project.
+61. Create an item with an existing name and confirm Divex suggests a unique
+    name without changing the existing item.
+62. Duplicate a file twice and confirm `copy` and `copy 2` names are used.
+63. Drag a file into a folder, drag it back to blank Explorer space, and confirm
+    the tree and maps refresh at each destination.
+64. Attempt to drag a folder into one of its descendants and confirm the move
+    is blocked without data loss.
+65. Verify new file, new folder, duplicate, cut, copy, paste, rename, and delete
+    keyboard shortcuts on focused Explorer rows.
+66. Repeat create, duplicate, move, and conflict checks in a WSL project; verify
+    Linux tools see the resulting Linux paths.
+67. Change Project Settings, reopen the project, and confirm its view, direction,
+    new-file type, live refresh, and Git preferences persist only for that root.
+68. Disable live refresh, edit externally, and confirm the workbench waits;
+    enable it and confirm native or WSL edits reload automatically.
+69. Create and switch branches from Source Control and confirm Explorer and
+    clean editor content update to the selected branch.
+70. Fetch, fast-forward pull, and push against a test remote; confirm pull does
+    not create an implicit merge commit and push never forces.
+71. Stash tracked and untracked work, restore it, and confirm the project model
+    refreshes after both actions.
+72. Cancel discard confirmation and verify no data changes. Then confirm
+    per-file and all-changes discard only in a disposable repository.
+73. Edit without saving, wait for **Recovery protected**, terminate Divex, and
+    reopen the project; confirm the recovery dialog appears automatically.
+74. Restore one buffer and save it, then restart and confirm its journal is gone.
+75. Discard another recovered buffer and confirm the disk file remains unchanged.
+76. Make several tabs dirty, restore all available files, and confirm every
+    buffer returns as unsaved with its independent content.
+77. Force a save failure and confirm the editor stays dirty and recovery remains
+    protected.
+78. Save native Windows and WSL files and verify no `.divex-save-*.tmp` or
+    `.divex-format-*` artifacts remain.
+79. Open a Python or Dart file, click its editor gutter, and confirm the
+    breakpoint appears in both the gutter and Debug sidebar after a restart.
+80. Press `F5`; if Python requests `debugpy`, choose the setup action and retry.
+81. Pause at a breakpoint and confirm the source line opens automatically.
+82. Inspect local variables, expand an object value, and switch call-stack
+    frames; variables and source location must follow the selected frame.
+83. Verify `F5`, `F6`, `F10`, `F11`, `Shift+F11`, and `Shift+F5` continue,
+    pause, step over, step in, step out, and stop respectively.
+84. Repeat a Python debug session in WSL and confirm Linux paths appear in the
+    adapter while Divex still opens the matching project-relative source file.
+85. Close the Electron window with a session running and confirm no adapter or
+    debuggee process remains.
+86. Open a local folder with no saved trust decision and confirm the first-open
+    dialog requires **Trust Workspace** or **Open in Restricted Mode**.
+87. Choose Restricted Mode and confirm terminals, tasks, Run Active File,
+    external file launching, Flutter analysis, debugging, and adapter setup are
+    disabled while reading, editing, file management, maps, and Git remain
+    available.
+88. Attempt the restricted execution methods through the preload API and
+    confirm Electron rejects them even without relying on disabled buttons.
+89. Trust the workspace from the project menu and confirm execution controls
+    become available without reopening the folder.
+90. Reopen the folder and confirm the trust decision is remembered only for
+    that exact native or WSL root.
+91. Revoke trust with a terminal or debugger running and confirm the owned
+    sessions stop and Restricted Mode returns immediately.
+92. Open the terminal profile menu and confirm only installed Windows shells
+    appear; open each available profile inside Divex and externally.
+93. Open a WSL project and confirm its distribution shell and Bash profile both
+    start in the Linux project directory.
+94. Split the terminal, type independently in both panes, close the split, and
+    confirm neither session loses its output.
+95. Use `Ctrl+F`, Enter, and Shift+Enter to move through terminal matches.
+96. Open an HTTP/HTTPS terminal link and confirm it uses the default browser;
+    confirm unsupported protocols are rejected.
+97. Create `divex.tasks.json` from the task menu, add a valid task, save, and
+    run it both inside Divex and in the selected external profile.
+98. Add an invalid group, absolute `cwd`, or duplicate custom task ID and
+    confirm task loading reports the configuration error without executing it.
+99. Run a task that prints file/line diagnostics and confirm Problems opens the
+    matching source line while the original terminal output remains intact.
+100. Switch the workspace to Restricted Mode and confirm profiles, custom task
+     discovery, integrated runs, external runs, and terminal links are blocked.
+101. Open `.ts`, `.tsx`, `.mts`, `.cts`, and `.d.ts` files and confirm they are
+     scanned, labeled TypeScript, syntax highlighted, watched, and editable.
+102. Confirm interfaces, type aliases, enums, namespaces, constructors, typed
+     functions, methods, variables, and TSX components appear in maps, outline,
+     navigation, and the Inspector.
+103. Resolve local type-only, mixed JS/TS, extensionless, and `index.ts` imports
+     and confirm external package imports remain external.
+104. Open a project containing `tsconfig.json`, run **TypeScript: Check**, and
+     confirm compiler diagnostics appear as clickable terminal Problems.
+105. Run an erasable `.ts` active file with Node.js 22 and confirm `.tsx` is not
+     incorrectly offered as a directly executable file.
+106. Single-click several Explorer files and confirm one clean preview tab is
+     replaced; edit or pin one and confirm it remains open.
+107. Close files, reopen one from History, then use `Command/Ctrl+Shift+T` for
+     the next and confirm their editor buffers open normally.
+108. Split the editor, choose different files in each group, and confirm focus,
+     save, undo, breakpoints, cursor movement, and minimap navigation target the
+     intended group.
+109. Toggle the minimap, open the diff panel, and confirm the active buffer is
+     compared with its last saved content without changing either version.
+110. Edit a file in Divex and externally before saving. Confirm the disk version
+     appears in Compare, Save is blocked, Keep mine preserves the local buffer,
+     and Reload disk replaces it only after an explicit choice.
+111. Run Flutter Analyze and confirm every parsed result appears in Workspace
+     diagnostics and opens the matching file and line.
+112. Inspect `dist/index.html` and confirm its CSP has `default-src 'none'`,
+     `script-src 'self'`, no `unsafe-eval`, and no production network origin.
+113. Open the workspace-trust dialog in restricted and trusted states. Confirm
+     every permission is labeled Allowed or Blocked, scripts describe inherited
+     user/network access, and extensions remain blocked in both states.
+114. Attempt page navigation, a popup, a webview, and a browser permission from
+     a disposable development fixture; each must be denied.
+115. From IPC security tests, verify unregistered windows, subframes, remote
+     URLs, another window's project root, and Mini-only forbidden channels are
+     rejected before their handler executes.
+116. Confirm the packaged workbench and Mini still load with sandboxing enabled
+     and that Mini can refresh/watch its bound project but cannot create a
+     terminal or invoke a write handler.
 
 ## Crash-containment checks
 
@@ -194,16 +305,16 @@ developer workstation.
 
 ## Test gaps
 
-The repository tests crash containment, versioned relationship evidence,
-SQL tables/columns/keys, foreign-key resolution, Dart database access links,
-loader filtering/progress/cache reuse,
+The repository tests crash containment, loader filtering/progress/cache reuse,
 changed-file reads, navigation search, definition/reference lookup, history,
 Git porcelain parsing, Git path containment, and stage/unstage state
 transitions, plus PTY directory containment, ownership, stream, resize, exit,
-and termination behavior, project-watcher filtering and debouncing, Flutter
-analyzer diagnostic parsing, exact-folder trust persistence/privacy, and
-restricted Source Control behavior. It does not yet have broad analyzer,
-  layout, or full Electron integration coverage.
+and termination behavior, project-watcher filtering and debouncing, plus
+Flutter analyzer diagnostic parsing, editor preview/recent tab rules, diff-row
+construction, external-conflict classification, CSP construction, sandboxed
+window policy, IPC sender/frame/project authorization, extension denial, and
+workspace permission details. It does not yet have analyzer, layout, or full
+Electron integration coverage.
 Highest-priority additions are:
 
 - fixtures for Dart symbols, imports, calls, and type relationships
@@ -211,5 +322,3 @@ Highest-priority additions are:
 - protected-mode scoping and limit tests
 - Electron path-validation and file-action tests
 - Playwright Electron smoke tests for both maps and the editor
-- dialect fixtures for PostgreSQL schemas, SQLite migrations, MySQL quoting,
-  database views, and ORM-generated SQL

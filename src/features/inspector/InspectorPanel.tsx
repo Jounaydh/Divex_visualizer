@@ -30,7 +30,7 @@ interface InspectorPanelProps {
 }
 
 function relationshipExplanation(source: AnalyzedFile, target: AnalyzedFile) {
-  return `${source.name} imports ${target.name} so it can use code defined there.`;
+  return `${source.name} references ${target.name} so it can use code defined there.`;
 }
 
 const evidenceProviderLabel: Record<EvidenceProvider, string> = {
@@ -95,7 +95,7 @@ export function InspectorPanel({
           <Lightbulb size={15} />
           <span>
             Open Logic map to follow calls, object creation, inheritance, and
-            imports with labeled arrows.
+            dependencies with labeled arrows.
           </span>
         </div>
       </aside>

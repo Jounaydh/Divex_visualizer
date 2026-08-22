@@ -158,9 +158,9 @@ function splitSqlList(content: string, absoluteStart: number) {
 function symbolRange(symbol: CodeSymbol): SourceRange {
   return {
     startLine: symbol.line,
-    startColumn: symbol.column,
+    startColumn: symbol.column ?? 1,
     endLine: symbol.endLine,
-    endColumn: symbol.endColumn,
+    endColumn: symbol.endColumn ?? 1,
   };
 }
 

@@ -4,55 +4,43 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  Columns2,
   FileCode2,
+  GitCompareArrows,
+  History,
   ListTree,
+  Map as MapIcon,
   Minus,
   Play,
+  Pin,
+  PinOff,
   Redo2,
   Replace,
   Save,
   Search,
   Settings2,
   Sparkles,
+  ShieldCheck,
   Undo2,
   WandSparkles,
   WrapText,
   X,
 } from "lucide-react";
-import * as monaco from "monaco-editor/editor";
-import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
-import JsonWorker from "monaco-editor/language/json/json.worker.js?worker";
-import "monaco-editor/features/bracketMatching/register.js";
-import "monaco-editor/features/clipboard/register.js";
-import "monaco-editor/features/codeEditor/register.js";
-import "monaco-editor/features/codicon/register.js";
-import "monaco-editor/features/comment/register.js";
-import "monaco-editor/features/contextmenu/register.js";
-import "monaco-editor/features/cursorUndo/register.js";
-import "monaco-editor/features/dnd/register.js";
-import "monaco-editor/features/find/register.js";
-import "monaco-editor/features/folding/register.js";
-import "monaco-editor/features/fontZoom/register.js";
-import "monaco-editor/features/hover/register.js";
-import "monaco-editor/features/indentation/register.js";
-import "monaco-editor/features/lineSelection/register.js";
-import "monaco-editor/features/linesOperations/register.js";
-import "monaco-editor/features/links/register.js";
-import "monaco-editor/features/multicursor/register.js";
-import "monaco-editor/features/snippet/register.js";
-import "monaco-editor/features/stickyScroll/register.js";
-import "monaco-editor/features/suggest/register.js";
-import "monaco-editor/features/tokenization/register.js";
-import "monaco-editor/features/unicodeHighlighter/register.js";
-import "monaco-editor/features/wordHighlighter/register.js";
-import "monaco-editor/features/wordOperations/register.js";
-import "monaco-editor/features/wordPartOperations/register.js";
-import "monaco-editor/languages/definitions/dart/register.js";
-import "monaco-editor/languages/definitions/java/register.js";
-import "monaco-editor/languages/definitions/python/register.js";
-import "monaco-editor/languages/definitions/sql/register.js";
-import "monaco-editor/languages/definitions/yaml/register.js";
-import "monaco-editor/languages/features/json/register.js";
+import * as ace from "ace-builds";
+import "ace-builds/src-noconflict/ext-language_tools";
+import "ace-builds/src-noconflict/mode-css";
+import "ace-builds/src-noconflict/mode-dart";
+import "ace-builds/src-noconflict/mode-html";
+import "ace-builds/src-noconflict/mode-java";
+import "ace-builds/src-noconflict/mode-javascript";
+import "ace-builds/src-noconflict/mode-json";
+import "ace-builds/src-noconflict/mode-jsx";
+import "ace-builds/src-noconflict/mode-typescript";
+import "ace-builds/src-noconflict/mode-tsx";
+import "ace-builds/src-noconflict/mode-python";
+import "ace-builds/src-noconflict/mode-text";
+import "ace-builds/src-noconflict/mode-yaml";
+import "ace-builds/src-noconflict/theme-one_dark";
 import {
   useCallback,
   useEffect,
@@ -63,64 +51,33 @@ import {
 import type {
   AnalyzedFile,
   CodeSymbol,
+  EditorRecoveryEntry,
   ProjectToolResult,
 } from "../../types";
-import { monacoLanguageForExtension } from "./editorLanguage";
-import { parseFlutterDiagnostics } from "./flutterDiagnostics";
+import { EditorRecoveryDialog } from "./EditorRecoveryDialog";
+import { EditorMinimap } from "./EditorMinimap";
+import { EditorDiagnosticsPanel, EditorDiffPanel } from "./EditorWorkbenchPanels";
+import { aceModeForExtension, closestSymbol, fileLanguage } from "./editorSupport";
+import type { EditorAction, EditorDocument, EditorGroup } from "./editorTypes";
+import { addRecentlyClosed, hasExternalConflict, replacePreviewTab } from "./editorWorkspace";
+import { parseFlutterDiagnostics, type EditorDiagnostic } from "./flutterDiagnostics";
+import { useEditorRecovery } from "./useEditorRecovery";
 
 interface CodeEditorProps {
   file: AnalyzedFile;
   files: AnalyzedFile[];
   projectName: string;
   rootPath: string;
+  breakpoints: Record<string, number[]>;
+  debugLocation: { filePath: string; line: number } | null;
+  executionEnabled: boolean;
+  workspaceTrusted?: boolean;
   revealLine: number | null;
   revealKey: number;
-  workspaceTrusted: boolean;
   onClose: () => void;
   onSelectFile: (path: string) => void;
   onPersist: (path: string, content: string) => void;
-}
-
-interface EditorDocument {
-  file: AnalyzedFile;
-  model: monaco.editor.ITextModel;
-  savedContent: string;
-  dirty: boolean;
-  viewState: monaco.editor.ICodeEditorViewState | null;
-  changeSubscription: monaco.IDisposable;
-}
-
-type EditorAction = "save" | "save-all" | "format" | "analyze" | null;
-
-const monacoGlobal = globalThis as typeof globalThis & {
-  MonacoEnvironment?: {
-    getWorker: (_moduleId: string, label: string) => Worker;
-  };
-};
-
-monacoGlobal.MonacoEnvironment = {
-  getWorker: (_moduleId, label) => {
-    if (label === "json") return new JsonWorker();
-    return new EditorWorker();
-  },
-};
-
-function fileLanguage(file: AnalyzedFile) {
-  if (file.extension === "dart") return "Dart";
-  if (file.extension === "py") return "Python";
-  if (file.extension === "sql") return "SQL";
-  return file.extension ? file.extension.toUpperCase() : "Plain text";
-}
-
-function closestSymbol(symbols: CodeSymbol[], line: number) {
-  return (
-    symbols
-      .filter((symbol) => symbol.line <= line && symbol.endLine >= line)
-      .sort(
-        (left, right) =>
-          left.endLine - left.line - (right.endLine - right.line),
-      )[0] ?? null
-  );
+  onToggleBreakpoint: (path: string, line: number) => void;
 }
 
 export function CodeEditor({
@@ -128,15 +85,30 @@ export function CodeEditor({
   files,
   projectName,
   rootPath,
+  breakpoints,
+  debugLocation,
+  executionEnabled,
   revealLine,
   revealKey,
-  workspaceTrusted,
   onClose,
   onSelectFile,
   onPersist,
+  onToggleBreakpoint,
 }: CodeEditorProps) {
+  const isMac = window.divex?.platform === "darwin";
   const [openTabs, setOpenTabs] = useState<string[]>([file.path]);
   const [, setRevision] = useState(0);
+  const [pinnedTabs, setPinnedTabs] = useState<Set<string>>(() => new Set());
+  const [previewPath, setPreviewPath] = useState<string | null>(file.path);
+  const [recentlyClosed, setRecentlyClosed] = useState<string[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [secondaryPath, setSecondaryPath] = useState<string | null>(null);
+  const [activeGroup, setActiveGroup] = useState<EditorGroup>("primary");
+  const [showMinimap, setShowMinimap] = useState(true);
+  const [workbenchPanel, setWorkbenchPanel] = useState<"diff" | "diagnostics" | null>(null);
+  const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
+  const [pendingReveal, setPendingReveal] = useState<{ path: string; line: number } | null>(null);
   const [action, setAction] = useState<EditorAction>(null);
   const [result, setResult] = useState<ProjectToolResult | null>(null);
   const [cursor, setCursor] = useState({ row: 0, column: 0 });
@@ -147,16 +119,26 @@ export function CodeEditor({
   const [wrap, setWrap] = useState(false);
   const [showInvisibles, setShowInvisibles] = useState(false);
   const [tabSize, setTabSize] = useState(2);
-  const [problemCount, setProblemCount] = useState(0);
   const editorHostRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const editorRef = useRef<ace.Ace.Editor | null>(null);
+  const secondaryEditorHostRef = useRef<HTMLDivElement>(null);
+  const secondaryEditorRef = useRef<ace.Ace.Editor | null>(null);
+  const secondaryPathRef = useRef<string | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const outlineMenuRef = useRef<HTMLDivElement>(null);
   const documentsRef = useRef(new Map<string, EditorDocument>());
   const activePathRef = useRef(file.path);
   const openTabsRef = useRef(openTabs);
+  const pinnedTabsRef = useRef(pinnedTabs);
+  const previewPathRef = useRef(previewPath);
+  const diagnosticsRef = useRef(diagnostics);
   const suppressedDocumentsRef = useRef(new Set<string>());
+  const debugLineRowsRef = useRef(new Map<ace.Ace.EditSession, number>());
+  const onToggleBreakpointRef = useRef(onToggleBreakpoint);
   const saveCommandRef = useRef<() => Promise<ProjectToolResult | void>>(
+    async () => undefined,
+  );
+  const secondarySaveCommandRef = useRef<() => Promise<ProjectToolResult | void>>(
     async () => undefined,
   );
   const filesByPath = useMemo(
@@ -164,84 +146,212 @@ export function CodeEditor({
     [files],
   );
   openTabsRef.current = openTabs;
+  pinnedTabsRef.current = pinnedTabs;
+  previewPathRef.current = previewPath;
+  secondaryPathRef.current = secondaryPath;
+  diagnosticsRef.current = diagnostics;
+  onToggleBreakpointRef.current = onToggleBreakpoint;
+  const {
+    clearRecoverySnapshot,
+    queueRecoverySnapshot,
+    recoveries,
+    recoveryStatus,
+    setRecoveries,
+    setRecoveryStatus,
+    writeRecoverySnapshot,
+  } = useEditorRecovery({ rootPath, filesByPath, documentsRef, setResult });
 
   const ensureDocument = useCallback((nextFile: AnalyzedFile) => {
     let document = documentsRef.current.get(nextFile.path);
     if (!document) {
-      const model = monaco.editor.createModel(
-        nextFile.content,
-        monacoLanguageForExtension(nextFile.extension),
-        monaco.Uri.from({
-          scheme: "inmemory",
-          authority: "divex",
-          path: `/${nextFile.path}`,
-        }),
-      );
-      model.updateOptions({ insertSpaces: true, tabSize: 2 });
+      const session = ace.createEditSession(nextFile.content);
+      session.setMode(aceModeForExtension(nextFile.extension));
+      session.setUseWorker(false);
+      session.setTabSize(2);
+      session.setUseSoftTabs(true);
       document = {
         file: nextFile,
-        model,
+        session,
         savedContent: nextFile.content,
         dirty: false,
-        viewState: null,
-        changeSubscription: { dispose: () => undefined },
+        cursor: { row: 0, column: 0 },
+        scrollTop: 0,
+        scrollLeft: 0,
       };
       const ownedDocument = document;
-      ownedDocument.changeSubscription = model.onDidChangeContent(() => {
+      session.on("change", () => {
         if (suppressedDocumentsRef.current.has(nextFile.path)) return;
         ownedDocument.dirty =
-          ownedDocument.model.getValue() !== ownedDocument.savedContent;
+          ownedDocument.session.getValue() !== ownedDocument.savedContent;
+        if (ownedDocument.dirty) {
+          setPinnedTabs((current) => {
+            if (current.has(nextFile.path)) return current;
+            return new Set(current).add(nextFile.path);
+          });
+          setPreviewPath((current) => current === nextFile.path ? null : current);
+        }
+        queueRecoverySnapshot(ownedDocument);
         setRevision((current) => current + 1);
       });
       documentsRef.current.set(nextFile.path, document);
     } else {
       document.file = nextFile;
-      monaco.editor.setModelLanguage(
-        document.model,
-        monacoLanguageForExtension(nextFile.extension),
-      );
-      if (!document.dirty && document.savedContent !== nextFile.content) {
+      document.session.setMode(aceModeForExtension(nextFile.extension));
+      if (hasExternalConflict(document, nextFile.content)) {
+        const conflictChanged =
+          !document.conflict || document.externalContent !== nextFile.content;
+        document.externalContent = nextFile.content;
+        document.conflict = true;
+        if (conflictChanged) setRevision((current) => current + 1);
+      } else if (!document.dirty && document.savedContent !== nextFile.content) {
         suppressedDocumentsRef.current.add(nextFile.path);
-        document.model.setValue(nextFile.content);
+        document.session.setValue(nextFile.content);
+        document.session.getUndoManager().reset();
         suppressedDocumentsRef.current.delete(nextFile.path);
         document.savedContent = nextFile.content;
+        document.externalContent = undefined;
+        document.conflict = false;
       }
     }
+    const annotations = diagnosticsRef.current
+      .filter((diagnostic) => diagnostic.path === nextFile.path || diagnostic.path.endsWith(`/${nextFile.path}`))
+      .map((diagnostic) => ({
+        row: Math.max(0, diagnostic.line - 1),
+        column: Math.max(0, diagnostic.column - 1),
+        text: `${diagnostic.message} (${diagnostic.code})`,
+        type: diagnostic.severity,
+      }));
+    document.session.setAnnotations(annotations);
     return document;
-  }, []);
+  }, [queueRecoverySnapshot]);
 
   const rememberActiveView = useCallback(() => {
     const editor = editorRef.current;
     const activeDocument = documentsRef.current.get(activePathRef.current);
     if (!editor || !activeDocument) return;
-    activeDocument.viewState = editor.saveViewState();
+    activeDocument.cursor = editor.getCursorPosition();
+    activeDocument.scrollTop = activeDocument.session.getScrollTop();
+    activeDocument.scrollLeft = activeDocument.session.getScrollLeft();
   }, []);
+
+  useEffect(() => {
+    if (!splitOpen || !secondaryEditorHostRef.current) return;
+    const editor = ace.edit(secondaryEditorHostRef.current);
+    secondaryEditorRef.current = editor;
+    editor.setTheme("ace/theme/one_dark");
+    editor.setOptions({
+      animatedScroll: true,
+      behavioursEnabled: true,
+      displayIndentGuides: true,
+      dragEnabled: true,
+      enableBasicAutocompletion: true,
+      enableLiveAutocompletion: true,
+      enableMultiselect: true,
+      fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
+      fontSize: `${fontSize}px`,
+      highlightActiveLine: true,
+      highlightSelectedWord: true,
+      mergeUndoDeltas: "always",
+      scrollPastEnd: 0.28,
+      showFoldWidgets: true,
+      showPrintMargin: false,
+      wrap,
+    });
+    editor.renderer.setPadding(13);
+    editor.renderer.setScrollMargin(10, 90, 0, 0);
+    const handleCursor = () => setCursor(editor.getCursorPosition());
+    const handleFocus = () => {
+      setActiveGroup("secondary");
+      setCursor(editor.getCursorPosition());
+    };
+    const handleGutterMouseDown = (event: ace.Ace.MouseEvent) => {
+      const target = event.domEvent.target as HTMLElement | null;
+      if (!target?.classList.contains("ace_gutter-cell") || !secondaryPathRef.current) return;
+      event.stop();
+      onToggleBreakpointRef.current(secondaryPathRef.current, event.getDocumentPosition().row + 1);
+    };
+    editor.selection.on("changeCursor", handleCursor);
+    editor.on("focus", handleFocus);
+    (editor.on as unknown as (event: string, callback: (mouseEvent: ace.Ace.MouseEvent) => void) => void)("guttermousedown", handleGutterMouseDown);
+    editor.commands.addCommand({
+      name: "divexSaveSecondary",
+      bindKey: { mac: "Command-S", win: "Ctrl-S" },
+      exec: () => void secondarySaveCommandRef.current(),
+    });
+    const splitFile = secondaryPathRef.current ? filesByPath.get(secondaryPathRef.current) : null;
+    if (splitFile) editor.setSession(ensureDocument(splitFile).session);
+    editor.resize(true);
+    return () => {
+      editor.selection.off("changeCursor", handleCursor);
+      editor.off("focus", handleFocus);
+      (editor.off as unknown as (event: string, callback: (mouseEvent: ace.Ace.MouseEvent) => void) => void)("guttermousedown", handleGutterMouseDown);
+      // Ace destroys the attached EditSession when an editor is destroyed.
+      // Detach first because split groups deliberately share document sessions.
+      editor.setSession(ace.createEditSession(""));
+      editor.destroy();
+      secondaryEditorRef.current = null;
+    };
+  // The secondary Ace instance is created only when the split opens.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitOpen]);
+
+  useEffect(() => {
+    if (!splitOpen || !secondaryPath) return;
+    const splitFile = filesByPath.get(secondaryPath);
+    const editor = secondaryEditorRef.current;
+    if (!splitFile || !editor) return;
+    const document = ensureDocument(splitFile);
+    editor.setSession(document.session);
+    editor.textInput.getElement().setAttribute("aria-label", `Editing ${splitFile.name} in split editor`);
+    editor.resize(true);
+  }, [ensureDocument, filesByPath, secondaryPath, splitOpen]);
 
   const activateDocument = useCallback(
     (nextFile: AnalyzedFile) => {
       const editor = editorRef.current;
       const document = ensureDocument(nextFile);
-      setOpenTabs((current) =>
-        current.includes(nextFile.path)
-          ? current
-          : [...current, nextFile.path],
-      );
+      const wasOpen = openTabsRef.current.includes(nextFile.path);
+      if (!wasOpen) {
+        const previousPreview = previewPathRef.current;
+        const previewDocument = previousPreview
+          ? documentsRef.current.get(previousPreview)
+          : undefined;
+        setOpenTabs((current) =>
+          replacePreviewTab(
+            current,
+            nextFile.path,
+            previousPreview,
+            pinnedTabsRef.current,
+            Boolean(previewDocument?.dirty),
+          ),
+        );
+        if (
+          previousPreview &&
+          previousPreview !== nextFile.path &&
+          !pinnedTabsRef.current.has(previousPreview) &&
+          !previewDocument?.dirty &&
+          secondaryPathRef.current !== previousPreview
+        ) {
+          documentsRef.current.delete(previousPreview);
+        }
+        setPreviewPath(nextFile.path);
+      }
       if (!editor) {
         activePathRef.current = nextFile.path;
         return;
       }
       rememberActiveView();
       activePathRef.current = nextFile.path;
-      editor.setModel(document.model);
-      editor.updateOptions({ ariaLabel: `Editing ${nextFile.name}` });
-      if (document.viewState) editor.restoreViewState(document.viewState);
-      else editor.setPosition({ lineNumber: 1, column: 1 });
-      const position = editor.getPosition();
-      setCursor({
-        row: Math.max(0, (position?.lineNumber ?? 1) - 1),
-        column: Math.max(0, (position?.column ?? 1) - 1),
-      });
-      editor.layout();
+      editor.setSession(document.session);
+      editor.textInput
+        .getElement()
+        .setAttribute("aria-label", `Editing ${nextFile.name}`);
+      editor.moveCursorTo(document.cursor.row, document.cursor.column);
+      editor.clearSelection();
+      document.session.setScrollTop(document.scrollTop);
+      document.session.setScrollLeft(document.scrollLeft);
+      setCursor(document.cursor);
+      editor.resize(true);
       editor.focus();
       setRevision((current) => current + 1);
     },
@@ -250,74 +360,67 @@ export function CodeEditor({
 
   useEffect(() => {
     if (!editorHostRef.current) return;
-    monaco.editor.defineTheme("divex-dark", {
-      base: "vs-dark",
-      inherit: true,
-      rules: [],
-      colors: {
-        "editor.background": "#0f1013",
-        "editor.foreground": "#d7dae0",
-        "editor.lineHighlightBackground": "#ffffff08",
-        "editor.selectionBackground": "#ffffff2b",
-        "editor.inactiveSelectionBackground": "#ffffff18",
-        "editorCursor.foreground": "#ffffff",
-        "editorGutter.background": "#111216",
-        "editorLineNumber.foreground": "#50535c",
-        "editorLineNumber.activeForeground": "#a8abb3",
-        "editorIndentGuide.background1": "#ffffff0d",
-        "editorIndentGuide.activeBackground1": "#ffffff24",
-      },
-    });
-    const editor = monaco.editor.create(editorHostRef.current, {
-      ariaLabel: `Editing ${file.name}`,
-      automaticLayout: true,
-      cursorBlinking: "smooth",
-      cursorSmoothCaretAnimation: "on",
-      dragAndDrop: true,
-      folding: true,
-      fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
-      fontLigatures: true,
-      fontSize: 11,
-      formatOnPaste: true,
-      guides: { indentation: true },
-      minimap: { enabled: false },
-      mouseWheelZoom: true,
-      multiCursorModifier: "alt",
-      padding: { top: 10, bottom: 90 },
-      renderLineHighlight: "all",
-      roundedSelection: true,
-      scrollBeyondLastLine: true,
-      smoothScrolling: true,
-      stickyScroll: { enabled: true },
-      suggest: { preview: true, showWords: true },
-      tabSize: 2,
-      theme: "divex-dark",
-      wordWrap: "off",
-    });
+    const editor = ace.edit(editorHostRef.current);
     editorRef.current = editor;
-    const cursorSubscription = editor.onDidChangeCursorPosition((event) =>
-      setCursor({
-        row: Math.max(0, event.position.lineNumber - 1),
-        column: Math.max(0, event.position.column - 1),
-      }),
-    );
-    editor.addCommand(
-      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-      () => void saveCommandRef.current(),
-    );
+    editor.setTheme("ace/theme/one_dark");
+    editor.setOptions({
+      animatedScroll: true,
+      behavioursEnabled: true,
+      displayIndentGuides: true,
+      dragEnabled: true,
+      enableBasicAutocompletion: true,
+      enableLiveAutocompletion: true,
+      enableMultiselect: true,
+      fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
+      fontSize: "11px",
+      highlightActiveLine: true,
+      highlightSelectedWord: true,
+      mergeUndoDeltas: "always",
+      scrollPastEnd: 0.28,
+      showFoldWidgets: true,
+      showPrintMargin: false,
+      wrap: false,
+    });
+    editor.renderer.setPadding(13);
+    editor.renderer.setScrollMargin(10, 90, 0, 0);
+    const handleCursor = () => setCursor(editor.getCursorPosition());
+    const handleFocus = () => setActiveGroup("primary");
+    const handleGutterMouseDown = (event: ace.Ace.MouseEvent) => {
+      const target = event.domEvent.target as HTMLElement | null;
+      if (!target?.classList.contains("ace_gutter-cell")) return;
+      event.stop();
+      const row = event.getDocumentPosition().row;
+      onToggleBreakpointRef.current(activePathRef.current, row + 1);
+    };
+    editor.selection.on("changeCursor", handleCursor);
+    editor.on("focus", handleFocus);
+    (
+      editor.on as unknown as (
+        event: string,
+        callback: (mouseEvent: ace.Ace.MouseEvent) => void,
+      ) => void
+    )("guttermousedown", handleGutterMouseDown);
+    editor.commands.addCommand({
+      name: "divexSave",
+      bindKey: { mac: "Command-S", win: "Ctrl-S" },
+      exec: () => void saveCommandRef.current(),
+    });
     activateDocument(file);
 
     return () => {
-      cursorSubscription.dispose();
-      editor.dispose();
+      editor.selection.off("changeCursor", handleCursor);
+      editor.off("focus", handleFocus);
+      (
+        editor.off as unknown as (
+          event: string,
+          callback: (mouseEvent: ace.Ace.MouseEvent) => void,
+        ) => void
+      )("guttermousedown", handleGutterMouseDown);
+      editor.destroy();
       editorRef.current = null;
-      documentsRef.current.forEach((document) => {
-        document.changeSubscription.dispose();
-        document.model.dispose();
-      });
       documentsRef.current.clear();
     };
-    // Monaco is created once; files switch by changing text models.
+    // Ace is created once; files switch by changing EditSession.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -337,6 +440,25 @@ export function CodeEditor({
   }, [ensureDocument, filesByPath]);
 
   useEffect(() => {
+    documentsRef.current.forEach((document, path) => {
+      const previousDebugRow = debugLineRowsRef.current.get(document.session);
+      if (previousDebugRow !== undefined) {
+        document.session.removeGutterDecoration(previousDebugRow, "ace_debug-line");
+        debugLineRowsRef.current.delete(document.session);
+      }
+      document.session.clearBreakpoints();
+      (breakpoints[path] ?? []).forEach((line) => {
+        document.session.setBreakpoint(line - 1, "ace_breakpoint");
+      });
+      if (debugLocation?.filePath === path && debugLocation.line > 0) {
+        const row = debugLocation.line - 1;
+        document.session.addGutterDecoration(row, "ace_debug-line");
+        debugLineRowsRef.current.set(document.session, row);
+      }
+    });
+  }, [breakpoints, debugLocation, openTabs]);
+
+  useEffect(() => {
     const editor = editorRef.current;
     if (!editor || !revealLine) return;
     let revealFrame = 0;
@@ -344,12 +466,12 @@ export function CodeEditor({
       revealFrame = window.requestAnimationFrame(() => {
         const line = Math.min(
           Math.max(1, revealLine),
-          editor.getModel()?.getLineCount() ?? 1,
+          editor.session.getLength(),
         );
-        editor.layout();
-        editor.setPosition({ lineNumber: line, column: 1 });
-        editor.revealLineInCenter(line, monaco.editor.ScrollType.Smooth);
-        setCursor({ row: line - 1, column: 0 });
+        editor.resize(true);
+        editor.gotoLine(line, 0, true);
+        editor.clearSelection();
+        setCursor(editor.getCursorPosition());
         editor.focus();
       });
     });
@@ -362,16 +484,16 @@ export function CodeEditor({
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    editor.updateOptions({
-      fontSize,
-      renderWhitespace: showInvisibles ? "all" : "selection",
-      tabSize,
-      wordWrap: wrap ? "on" : "off",
-    });
+    editor.setFontSize(fontSize);
+    editor.setShowInvisibles(showInvisibles);
+    secondaryEditorRef.current?.setFontSize(fontSize);
+    secondaryEditorRef.current?.setShowInvisibles(showInvisibles);
     documentsRef.current.forEach((document) => {
-      document.model.updateOptions({ insertSpaces: true, tabSize });
+      document.session.setUseWrapMode(wrap);
+      document.session.setTabSize(tabSize);
     });
-    editor.layout();
+    editor.resize(true);
+    secondaryEditorRef.current?.resize(true);
   }, [fontSize, openTabs, showInvisibles, tabSize, wrap]);
 
   useEffect(() => {
@@ -423,23 +545,50 @@ export function CodeEditor({
     if (!document) {
       return { success: false, output: "That editor document is not open." };
     }
-    const content = document.model.getValue();
-    const saveResult =
-      !window.divex || rootPath === "Demo project"
-        ? {
-            success: true,
-            output: "Saved in this Divex demo session.",
-          }
-        : await window.divex.saveProjectFile({
-            rootPath,
-            filePath: path,
-            content,
-          });
+    if (document.conflict) {
+      setWorkbenchPanel("diff");
+      return {
+        success: false,
+        output: `${document.file.name} changed outside Divex. Compare it, then choose Keep mine or Reload disk before saving.`,
+      };
+    }
+    const content = document.session.getValue();
+    let saveResult: ProjectToolResult;
+    try {
+      saveResult =
+        !window.divex || rootPath === "Demo project"
+          ? {
+              success: true,
+              output: "Saved in this Divex demo session.",
+            }
+          : await window.divex.saveProjectFile({
+              rootPath,
+              filePath: path,
+              content,
+            });
+    } catch (error) {
+      saveResult = {
+        success: false,
+        output:
+          error instanceof Error
+            ? `${error.message} Your unsaved buffer remains recovery-protected.`
+            : "The file could not be saved. Your unsaved buffer remains recovery-protected.",
+      };
+    }
     if (saveResult.success) {
       document.savedContent = content;
       document.dirty = false;
+      document.externalContent = undefined;
+      document.conflict = false;
       onPersist(path, content);
+      await clearRecoverySnapshot(path).catch(() => undefined);
+      const hasOtherDirtyDocument = [...documentsRef.current.values()].some(
+        (candidate) => candidate !== document && candidate.dirty,
+      );
+      setRecoveryStatus(hasOtherDirtyDocument ? "protected" : "idle");
       setRevision((current) => current + 1);
+    } else {
+      await writeRecoverySnapshot(document);
     }
     return saveResult;
   };
@@ -447,7 +596,11 @@ export function CodeEditor({
   const saveCurrentFile = async () => {
     setAction("save");
     try {
-      const saveResult = await persistDocument(file.path);
+      const activePath =
+        activeGroup === "secondary" && secondaryPathRef.current
+          ? secondaryPathRef.current
+          : activePathRef.current;
+      const saveResult = await persistDocument(activePath);
       setResult(saveResult);
       return saveResult;
     } finally {
@@ -492,11 +645,14 @@ export function CodeEditor({
     saved: boolean,
   ) => {
     suppressedDocumentsRef.current.add(document.file.path);
-    document.model.setValue(content);
+    document.session.setValue(content);
+    document.session.getUndoManager().reset();
     suppressedDocumentsRef.current.delete(document.file.path);
     if (saved) {
       document.savedContent = content;
       document.dirty = false;
+      document.externalContent = undefined;
+      document.conflict = false;
     } else {
       document.dirty = content !== document.savedContent;
     }
@@ -504,7 +660,7 @@ export function CodeEditor({
   };
 
   const formatDart = async () => {
-    if (file.extension !== "dart" || !workspaceTrusted) return;
+    if (activeEditorFile.extension !== "dart") return;
     if (!window.divex || rootPath === "Demo project") {
       setResult({
         success: false,
@@ -512,18 +668,20 @@ export function CodeEditor({
       });
       return;
     }
-    const document = ensureDocument(file);
+    const document = ensureDocument(activeEditorFile);
     setAction("format");
     try {
       const formatResult = await window.divex.formatDartFile({
         rootPath,
-        filePath: file.path,
-        content: document.model.getValue(),
+        filePath: activeEditorFile.path,
+        content: document.session.getValue(),
       });
       setResult(formatResult);
       if (formatResult.success && formatResult.content !== undefined) {
         replaceDocumentContent(document, formatResult.content, true);
-        onPersist(file.path, formatResult.content);
+        onPersist(activeEditorFile.path, formatResult.content);
+        await clearRecoverySnapshot(activeEditorFile.path).catch(() => undefined);
+        setRecoveryStatus("idle");
       }
     } finally {
       setAction(null);
@@ -531,12 +689,13 @@ export function CodeEditor({
   };
 
   const applyDiagnostics = (output: string) => {
-    const diagnostics = parseFlutterDiagnostics(output);
+    const nextDiagnostics = parseFlutterDiagnostics(output);
+    diagnosticsRef.current = nextDiagnostics;
+    setDiagnostics(nextDiagnostics);
     documentsRef.current.forEach((document) =>
-      monaco.editor.setModelMarkers(document.model, "divex-flutter", []),
+      document.session.clearAnnotations(),
     );
-    const markersByPath = new Map<string, monaco.editor.IMarkerData[]>();
-    diagnostics.forEach((diagnostic) => {
+    nextDiagnostics.forEach((diagnostic) => {
       const matchingFile = files.find(
         (candidate) =>
           diagnostic.path === candidate.path ||
@@ -545,50 +704,25 @@ export function CodeEditor({
       if (!matchingFile) return;
       const document = documentsRef.current.get(matchingFile.path);
       if (!document) return;
-      const lineNumber = Math.min(
-        Math.max(1, diagnostic.line),
-        document.model.getLineCount(),
-      );
-      const startColumn = Math.min(
-        Math.max(1, diagnostic.column),
-        document.model.getLineMaxColumn(lineNumber),
-      );
-      const severity =
-        diagnostic.severity === "error"
-          ? monaco.MarkerSeverity.Error
-          : diagnostic.severity === "warning"
-            ? monaco.MarkerSeverity.Warning
-            : monaco.MarkerSeverity.Info;
-      const markers = markersByPath.get(matchingFile.path) ?? [];
-      markers.push({
-        code: diagnostic.code,
-        endColumn: Math.min(
-          document.model.getLineMaxColumn(lineNumber),
-          startColumn + 1,
-        ),
-        endLineNumber: lineNumber,
-        message: diagnostic.message,
-        severity,
-        source: "flutter analyze",
-        startColumn,
-        startLineNumber: lineNumber,
-      });
-      markersByPath.set(matchingFile.path, markers);
+      const current = document.session.getAnnotations() ?? [];
+      document.session.setAnnotations([
+        ...current,
+        {
+          row: Math.max(0, diagnostic.line - 1),
+          column: Math.max(0, diagnostic.column - 1),
+          text: `${diagnostic.message} (${diagnostic.code})`,
+          type: diagnostic.severity,
+        },
+      ]);
     });
-    markersByPath.forEach((markers, path) => {
-      const document = documentsRef.current.get(path);
-      if (document) {
-        monaco.editor.setModelMarkers(document.model, "divex-flutter", markers);
-      }
-    });
-    setProblemCount(diagnostics.length);
+    setWorkbenchPanel("diagnostics");
   };
 
   const analyzeFlutter = async () => {
-    if (!workspaceTrusted) {
+    if (!executionEnabled) {
       setResult({
         success: false,
-        output: "Trust this workspace before running Flutter analysis.",
+        output: "Trust this workspace before running project analysis tools.",
       });
       return;
     }
@@ -618,11 +752,22 @@ export function CodeEditor({
     const currentTabs = openTabsRef.current;
     const closingIndex = currentTabs.indexOf(path);
     const nextTabs = currentTabs.filter((candidate) => candidate !== path);
+    void clearRecoverySnapshot(path).catch(() => undefined);
+    setRecentlyClosed((current) => addRecentlyClosed(current, path));
+    setPinnedTabs((current) => {
+      if (!current.has(path)) return current;
+      const next = new Set(current);
+      next.delete(path);
+      return next;
+    });
+    setPreviewPath((current) => current === path ? null : current);
+    if (secondaryPathRef.current === path) {
+      setSecondaryPath(null);
+      setSplitOpen(false);
+      setActiveGroup("primary");
+    }
     setOpenTabs(nextTabs);
     setPendingClosePath(null);
-    const closingDocument = documentsRef.current.get(path);
-    closingDocument?.changeSubscription.dispose();
-    closingDocument?.model.dispose();
     if (path !== file.path) {
       documentsRef.current.delete(path);
       return;
@@ -653,22 +798,198 @@ export function CodeEditor({
     }
   };
 
+  const applyRecovery = (entry: EditorRecoveryEntry) => {
+    const recoveredFile = filesByPath.get(entry.filePath);
+    if (!recoveredFile) {
+      setResult({
+        success: false,
+        output: `${entry.filePath} is no longer present in the opened project. Keep the recovery entry until the file is restored.`,
+      });
+      return false;
+    }
+    const document = ensureDocument(recoveredFile);
+    replaceDocumentContent(document, entry.content, false);
+    setOpenTabs((current) =>
+      current.includes(entry.filePath)
+        ? current
+        : [...current, entry.filePath],
+    );
+    setPinnedTabs((current) => new Set(current).add(entry.filePath));
+    setPreviewPath((current) => current === entry.filePath ? null : current);
+    setRecoveryStatus("protected");
+    return true;
+  };
+
+  const restoreRecovery = (entry: EditorRecoveryEntry) => {
+    if (!applyRecovery(entry)) return;
+    setRecoveries((current) =>
+      current.filter((candidate) => candidate.filePath !== entry.filePath),
+    );
+    if (entry.filePath !== file.path) onSelectFile(entry.filePath);
+  };
+
+  const restoreAllRecoveries = () => {
+    const restored = recoveries.filter(applyRecovery);
+    setRecoveries((current) =>
+      current.filter(
+        (entry) =>
+          !restored.some((candidate) => candidate.filePath === entry.filePath),
+      ),
+    );
+    const first = restored[0];
+    if (first && first.filePath !== file.path) onSelectFile(first.filePath);
+  };
+
+  const discardRecovery = async (entry: EditorRecoveryEntry) => {
+    let cleared = true;
+    await clearRecoverySnapshot(entry.filePath).catch((error) => {
+      cleared = false;
+      setResult({
+        success: false,
+        output:
+          error instanceof Error
+            ? error.message
+            : "The recovery snapshot could not be discarded.",
+      });
+    });
+    if (!cleared) return;
+    setRecoveries((current) =>
+      current.filter((candidate) => candidate.filePath !== entry.filePath),
+    );
+  };
+
+  const discardAllRecoveries = async () => {
+    await Promise.all(recoveries.map(discardRecovery));
+    setRecoveries([]);
+    setRecoveryStatus("idle");
+  };
+
   const goToSymbol = (symbol: CodeSymbol) => {
-    const editor = editorRef.current;
+    const editor = activeGroup === "secondary"
+      ? secondaryEditorRef.current
+      : editorRef.current;
     if (!editor) return;
-    editor.setPosition({ lineNumber: symbol.line, column: symbol.column });
-    editor.revealLineInCenter(symbol.line, monaco.editor.ScrollType.Smooth);
+    editor.gotoLine(symbol.line, 0, true);
+    editor.clearSelection();
     editor.focus();
     setOutlineOpen(false);
   };
 
-  saveCommandRef.current = saveCurrentFile;
+  const openInSplit = (path: string) => {
+    const splitFile = filesByPath.get(path);
+    if (!splitFile) return;
+    ensureDocument(splitFile);
+    setOpenTabs((current) => current.includes(path) ? current : [...current, path]);
+    setPinnedTabs((current) => new Set(current).add(path));
+    setPreviewPath((current) => current === path ? null : current);
+    setSecondaryPath(path);
+    setSplitOpen(true);
+    setActiveGroup("secondary");
+  };
 
-  const activeDocument = documentsRef.current.get(file.path);
+  const togglePinned = (path: string) => {
+    setPinnedTabs((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+    setPreviewPath((current) => current === path ? null : current);
+  };
+
+  const reopenClosedFile = (path: string) => {
+    const reopened = filesByPath.get(path);
+    if (!reopened) {
+      setRecentlyClosed((current) => current.filter((candidate) => candidate !== path));
+      setResult({ success: false, output: `${path} is no longer in this workspace.` });
+      return;
+    }
+    setRecentlyClosed((current) => current.filter((candidate) => candidate !== path));
+    setPinnedTabs((current) => new Set(current).add(path));
+    setPreviewPath((current) => current === path ? null : current);
+    onSelectFile(path);
+    setHistoryOpen(false);
+  };
+
+  const reloadConflictFromDisk = async (document: EditorDocument) => {
+    if (document.externalContent === undefined) return;
+    replaceDocumentContent(document, document.externalContent, true);
+    await clearRecoverySnapshot(document.file.path).catch(() => undefined);
+    setResult({ success: true, output: `Reloaded ${document.file.name} from disk.` });
+  };
+
+  const keepConflictBuffer = (document: EditorDocument) => {
+    if (document.externalContent === undefined) return;
+    document.savedContent = document.externalContent;
+    document.externalContent = undefined;
+    document.conflict = false;
+    document.dirty = document.session.getValue() !== document.savedContent;
+    queueRecoverySnapshot(document);
+    setRevision((current) => current + 1);
+    setResult({ success: true, output: `Kept your editor changes for ${document.file.name}. Save to replace the disk version.` });
+  };
+
+  const openDiagnostic = (diagnostic: EditorDiagnostic) => {
+    const matchingFile = files.find((candidate) =>
+      diagnostic.path === candidate.path || diagnostic.path.endsWith(`/${candidate.path}`),
+    );
+    if (!matchingFile) return;
+    setPendingReveal({ path: matchingFile.path, line: diagnostic.line });
+    setActiveGroup("primary");
+    onSelectFile(matchingFile.path);
+  };
+
+  useEffect(() => {
+    if (!pendingReveal || pendingReveal.path !== file.path) return;
+    const frame = window.requestAnimationFrame(() => {
+      editorRef.current?.gotoLine(pendingReveal.line, 0, true);
+      editorRef.current?.focus();
+      setPendingReveal(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [file.path, pendingReveal]);
+
+  useEffect(() => {
+    const reopen = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== "t") return;
+      const path = recentlyClosed[0];
+      if (!path) return;
+      event.preventDefault();
+      reopenClosedFile(path);
+    };
+    window.addEventListener("keydown", reopen);
+    return () => window.removeEventListener("keydown", reopen);
+  });
+
+  saveCommandRef.current = () => persistDocument(activePathRef.current);
+  secondarySaveCommandRef.current = () => secondaryPathRef.current
+    ? persistDocument(secondaryPathRef.current)
+    : Promise.resolve({ success: false, output: "No split editor is open." });
+
+  const activeEditorPath =
+    activeGroup === "secondary" && secondaryPath
+      ? secondaryPath
+      : file.path;
+  const activeEditorFile = filesByPath.get(activeEditorPath) ?? file;
+  const activeDocument = documentsRef.current.get(activeEditorPath);
+  const secondaryDocument = secondaryPath
+    ? documentsRef.current.get(secondaryPath)
+    : null;
+  const conflictDiagnostics: EditorDiagnostic[] = [...documentsRef.current.values()]
+    .filter((document) => document.conflict)
+    .map((document) => ({
+      severity: "warning",
+      message: "File changed outside Divex while this editor buffer has unsaved changes.",
+      path: document.file.path,
+      line: 1,
+      column: 1,
+      code: "external-change",
+    }));
+  const workspaceDiagnostics = [...conflictDiagnostics, ...diagnostics];
   const dirtyCount = [...documentsRef.current.values()].filter(
     (document) => document.dirty,
   ).length;
-  const activeSymbol = closestSymbol(file.symbols, cursor.row + 1);
+  const activeSymbol = closestSymbol(activeEditorFile.symbols, cursor.row + 1);
   const pendingDocument = pendingClosePath
     ? documentsRef.current.get(pendingClosePath)
     : null;
@@ -687,23 +1008,21 @@ export function CodeEditor({
           <span>Visualizer</span>
         </button>
         <div className="editor-file-title">
-          <strong>{file.name}</strong>
-          <span>{file.path}</span>
+          <strong>{activeEditorFile.name}</strong>
+          <span>{activeEditorFile.path}{activeGroup === "secondary" ? " · split" : ""}</span>
         </div>
         <div className="flutter-badge">
           <Sparkles size={12} />
-          {file.extension === "dart"
+          {activeEditorFile.extension === "dart"
             ? "Dart · Flutter"
-            : fileLanguage(file)}
+            : fileLanguage(activeEditorFile)}
         </div>
         <div className="editor-actions">
           <button
             type="button"
             title="Undo"
             aria-label="Undo"
-            onClick={() =>
-              editorRef.current?.trigger("divex-toolbar", "undo", null)
-            }
+            onClick={() => (activeGroup === "secondary" ? secondaryEditorRef.current : editorRef.current)?.undo()}
           >
             <Undo2 size={13} />
           </button>
@@ -711,34 +1030,80 @@ export function CodeEditor({
             type="button"
             title="Redo"
             aria-label="Redo"
-            onClick={() =>
-              editorRef.current?.trigger("divex-toolbar", "redo", null)
-            }
+            onClick={() => (activeGroup === "secondary" ? secondaryEditorRef.current : editorRef.current)?.redo()}
           >
             <Redo2 size={13} />
           </button>
           <button
             type="button"
-            title="Find (⌘F)"
+            title={isMac ? "Find (⌘F)" : "Find (Ctrl+F)"}
             aria-label="Find in file"
-            onClick={() =>
-              void editorRef.current?.getAction("actions.find")?.run()
-            }
+            onClick={() => (activeGroup === "secondary" ? secondaryEditorRef.current : editorRef.current)?.execCommand("find")}
           >
             <Search size={13} />
           </button>
           <button
             type="button"
-            title="Replace (⌥⌘F)"
+            title={isMac ? "Replace (⌥⌘F)" : "Replace (Ctrl+H)"}
             aria-label="Replace in file"
-            onClick={() =>
-              void editorRef.current
-                ?.getAction("editor.action.startFindReplaceAction")
-                ?.run()
-            }
+            onClick={() => (activeGroup === "secondary" ? secondaryEditorRef.current : editorRef.current)?.execCommand("replace")}
           >
             <Replace size={13} />
           </button>
+          <button
+            type="button"
+            title={splitOpen ? "Close split editor" : "Split editor"}
+            aria-label={splitOpen ? "Close split editor" : "Split editor"}
+            className={splitOpen ? "active" : ""}
+            onClick={() => {
+              if (splitOpen) {
+                setSplitOpen(false);
+                setSecondaryPath(null);
+                setActiveGroup("primary");
+              } else openInSplit(activeEditorFile.path);
+            }}
+          >
+            <Columns2 size={13} />
+          </button>
+          <button
+            type="button"
+            title="Compare editor buffer with saved or external version"
+            aria-label="Open diff editor"
+            className={workbenchPanel === "diff" ? "active" : ""}
+            onClick={() => setWorkbenchPanel((current) => current === "diff" ? null : "diff")}
+          >
+            <GitCompareArrows size={13} />
+          </button>
+          <button
+            type="button"
+            title="Workspace diagnostics"
+            aria-label="Workspace diagnostics"
+            className={workbenchPanel === "diagnostics" ? "active" : ""}
+            onClick={() => setWorkbenchPanel((current) => current === "diagnostics" ? null : "diagnostics")}
+          >
+            <CircleAlert size={13} />
+          </button>
+          <div className="editor-toolbar-menu">
+            <button
+              type="button"
+              title={isMac ? "Recently closed (⇧⌘T)" : "Recently closed (Ctrl+Shift+T)"}
+              aria-label="Recently closed files"
+              className={historyOpen ? "active" : ""}
+              onClick={() => setHistoryOpen((current) => !current)}
+            >
+              <History size={13} />
+            </button>
+            {historyOpen && (
+              <div className="editor-history-popover">
+                <strong>Recently closed</strong>
+                {recentlyClosed.length === 0 ? <span>No recently closed files.</span> : recentlyClosed.map((path) => (
+                  <button type="button" key={path} onClick={() => reopenClosedFile(path)}>
+                    <FileCode2 size={11} /><span>{filesByPath.get(path)?.name ?? path}<small>{path}</small></span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="editor-toolbar-menu" ref={settingsMenuRef}>
             <button
               type="button"
@@ -798,6 +1163,15 @@ export function CodeEditor({
                   Show whitespace
                 </label>
                 <label>
+                  <input
+                    type="checkbox"
+                    checked={showMinimap}
+                    onChange={(event) => setShowMinimap(event.target.checked)}
+                  />
+                  <MapIcon size={13} />
+                  Show minimap
+                </label>
+                <label>
                   <span>Tab size</span>
                   <select
                     value={tabSize}
@@ -816,20 +1190,22 @@ export function CodeEditor({
             type="button"
             title="Format Dart file"
             onClick={() => void formatDart()}
-            disabled={
-              action !== null ||
-              file.extension !== "dart" ||
-              !workspaceTrusted
-            }
+            disabled={action !== null || activeEditorFile.extension !== "dart"}
           >
             <WandSparkles size={14} />
             <span>{action === "format" ? "Formatting…" : "Format"}</span>
           </button>
           <button
             type="button"
-            title="Analyze Flutter project"
+            title={
+              activeEditorFile.kind === "dart"
+                ? "Analyze Flutter project"
+                : "Flutter analysis is available for Dart projects"
+            }
             onClick={() => void analyzeFlutter()}
-            disabled={action !== null || !workspaceTrusted}
+            disabled={
+              action !== null || activeEditorFile.kind !== "dart" || !executionEnabled
+            }
           >
             <Play size={14} />
             <span>{action === "analyze" ? "Analyzing…" : "Analyze"}</span>
@@ -865,19 +1241,31 @@ export function CodeEditor({
             <button
               type="button"
               role="tab"
-              aria-selected={path === file.path}
-              className={path === file.path ? "active" : ""}
+              aria-selected={path === file.path && activeGroup === "primary"}
+              className={`${path === file.path ? "active" : ""} ${pinnedTabs.has(path) ? "pinned" : ""} ${previewPath === path ? "preview" : ""}`}
               key={path}
               title={path}
               onClick={() => {
+                setActiveGroup("primary");
                 if (path === file.path) editorRef.current?.focus();
                 else onSelectFile(path);
+              }}
+              onDoubleClick={() => {
+                setPinnedTabs((current) => new Set(current).add(path));
+                setPreviewPath((current) => current === path ? null : current);
               }}
             >
               <FileCode2 size={12} />
               <span>{tabFile.name}</span>
               {document?.dirty && <i title="Unsaved changes" />}
+              {pinnedTabs.has(path) ? (
+                <PinOff className="editor-tab-pin" size={10} aria-label={`Unpin ${tabFile.name}`} onClick={(event) => { event.stopPropagation(); togglePinned(path); }} />
+              ) : (
+                <Pin className="editor-tab-pin" size={10} aria-label={`Pin ${tabFile.name}`} onClick={(event) => { event.stopPropagation(); togglePinned(path); }} />
+              )}
+              <Columns2 className="editor-tab-split" size={10} aria-label={`Open ${tabFile.name} in split editor`} onClick={(event) => { event.stopPropagation(); openInSplit(path); }} />
               <X
+                className="editor-tab-close"
                 size={11}
                 aria-label={`Close ${tabFile.name}`}
                 onClick={(event) => {
@@ -893,7 +1281,7 @@ export function CodeEditor({
       <div className="editor-breadcrumbs">
         <span className="status-dot" />
         <strong>{projectName}</strong>
-        {file.path.split("/").map((part, index) => (
+        {activeEditorFile.path.split("/").map((part, index) => (
           <span className="editor-breadcrumb-part" key={`${part}:${index}`}>
             <ChevronRight size={10} />
             {part}
@@ -909,20 +1297,20 @@ export function CodeEditor({
         <div className="editor-outline-menu" ref={outlineMenuRef}>
           <button
             type="button"
-            disabled={file.symbols.length === 0}
+            disabled={activeEditorFile.symbols.length === 0}
             onClick={() => {
               setSettingsOpen(false);
               setOutlineOpen((current) => !current);
             }}
           >
             <ListTree size={12} />
-            {file.symbols.length} symbols
+            {activeEditorFile.symbols.length} symbols
             <ChevronDown size={10} />
           </button>
           {outlineOpen && (
             <div className="editor-outline-popover">
-              <strong>Symbols in {file.name}</strong>
-              {file.symbols.map((symbol) => (
+              <strong>Symbols in {activeEditorFile.name}</strong>
+              {activeEditorFile.symbols.map((symbol) => (
                 <button
                   type="button"
                   key={symbol.id}
@@ -939,12 +1327,75 @@ export function CodeEditor({
         </div>
       </div>
 
-      <div className="editor-body">
-        <div
-          className="code-editor-host"
-          ref={editorHostRef}
-          aria-label={`Code editor for ${file.name}`}
-        />
+      <div className={`editor-workspace ${activeDocument?.conflict ? "with-conflict" : ""}`}>
+        {activeDocument?.conflict && (
+          <div className="editor-conflict-banner" role="alert">
+            <CircleAlert size={13} />
+            <span><strong>Changed outside Divex</strong>Your unsaved buffer was kept.</span>
+            <button type="button" onClick={() => setWorkbenchPanel("diff")}>Compare</button>
+            <button type="button" onClick={() => keepConflictBuffer(activeDocument)}>Keep mine</button>
+            <button type="button" onClick={() => void reloadConflictFromDisk(activeDocument)}>Reload disk</button>
+          </div>
+        )}
+        <div className={`editor-body editor-groups ${splitOpen ? "split" : ""}`}>
+          <div className={`editor-group ${activeGroup === "primary" ? "active" : ""}`} onPointerDown={() => setActiveGroup("primary")}>
+            <div
+              className="code-editor-host"
+              ref={editorHostRef}
+              aria-label={`Code editor for ${file.name}`}
+            />
+            {showMinimap && (
+              <EditorMinimap
+                content={documentsRef.current.get(file.path)?.session.getValue() ?? file.content}
+                activeLine={activeGroup === "primary" ? cursor.row + 1 : 1}
+                onNavigate={(line) => {
+                  editorRef.current?.gotoLine(line, 0, true);
+                  editorRef.current?.focus();
+                }}
+              />
+            )}
+          </div>
+          {splitOpen && secondaryPath && secondaryDocument && (
+            <div className={`editor-group secondary ${activeGroup === "secondary" ? "active" : ""}`} onPointerDown={() => setActiveGroup("secondary")}>
+              <header>
+                <FileCode2 size={11} />
+                <span>{secondaryDocument.file.name}<small>{secondaryPath}</small></span>
+                {secondaryDocument.dirty && <i title="Unsaved changes" />}
+                <button type="button" aria-label="Close split editor" onClick={() => { setSplitOpen(false); setSecondaryPath(null); setActiveGroup("primary"); }}><X size={11} /></button>
+              </header>
+              <div className="secondary-editor-host-wrap">
+                <div className="code-editor-host" ref={secondaryEditorHostRef} aria-label={`Code editor for ${secondaryDocument.file.name} in split editor`} />
+                {showMinimap && (
+                  <EditorMinimap
+                    content={secondaryDocument.session.getValue()}
+                    activeLine={activeGroup === "secondary" ? cursor.row + 1 : 1}
+                    onNavigate={(line) => {
+                      secondaryEditorRef.current?.gotoLine(line, 0, true);
+                      secondaryEditorRef.current?.focus();
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {workbenchPanel === "diff" && activeDocument && (
+          <EditorDiffPanel
+            fileName={activeEditorFile.name}
+            leftLabel={activeDocument.conflict ? "External disk version" : "Last saved version"}
+            leftContent={activeDocument.externalContent ?? activeDocument.savedContent}
+            rightContent={activeDocument.session.getValue()}
+            onClose={() => setWorkbenchPanel(null)}
+          />
+        )}
+        {workbenchPanel === "diagnostics" && (
+          <EditorDiagnosticsPanel
+            diagnostics={workspaceDiagnostics}
+            onOpen={openDiagnostic}
+            onClose={() => setWorkbenchPanel(null)}
+          />
+        )}
       </div>
 
       {result && (
@@ -970,14 +1421,28 @@ export function CodeEditor({
       )}
 
       <footer className="editor-statusbar">
-        <span>{fileLanguage(file)}</span>
+        <span>{fileLanguage(activeEditorFile)}</span>
         <span>UTF-8</span>
         <span>Spaces: {tabSize}</span>
         <span>{wrap ? "Word wrap" : "No wrap"}</span>
-        {problemCount > 0 && (
+        {workspaceDiagnostics.length > 0 && (
           <span className="editor-problems">
             <CircleAlert size={10} />
-            {problemCount} problem{problemCount === 1 ? "" : "s"}
+            {workspaceDiagnostics.length} problem{workspaceDiagnostics.length === 1 ? "" : "s"}
+          </span>
+        )}
+        {recoveryStatus !== "idle" && (
+          <span className={`editor-recovery-state ${recoveryStatus}`}>
+            {recoveryStatus === "error" ? (
+              <CircleAlert size={10} />
+            ) : (
+              <ShieldCheck size={10} />
+            )}
+            {recoveryStatus === "saving"
+              ? "Protecting edits…"
+              : recoveryStatus === "protected"
+                ? "Recovery protected"
+                : "Recovery unavailable"}
           </span>
         )}
         <span className="editor-status-spacer" />
@@ -990,6 +1455,15 @@ export function CodeEditor({
             : "All open files saved"}
         </span>
       </footer>
+
+      <EditorRecoveryDialog
+        entries={recoveries}
+        filesByPath={filesByPath}
+        onRestore={restoreRecovery}
+        onDiscard={(entry) => void discardRecovery(entry)}
+        onRestoreAll={restoreAllRecoveries}
+        onDiscardAll={() => void discardAllRecoveries()}
+      />
 
       {pendingDocument && (
         <div className="editor-close-backdrop" role="presentation">
